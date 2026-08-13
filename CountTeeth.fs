@@ -79,87 +79,11 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         if (size(endFaces) == 0)
             throw "未找到垂直于轴的平面端面。请确认所选零件是带轮或链轮。";
 
-        var endFace = endFaces[0];
-        var endPlane = evPlane(context, { "face" : endFace });
-        var endZ = dot(endPlane.origin - axisOrigin, axisDir);
-
-        // ---------- 3. 取端面上的所有边(按中点轴向坐标筛选) -----------------
+        // 收集所有边, 按轴向坐标缓存中点半径(一次性计算, 避免重复)
         var allEdges = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.EDGE));
 
-        var profileEdges = [];
-        for (var edge in allEdges)
-        {
-            try silent
-            {
-                var pt = evEdgeTangentLine(context, { "edge" : edge, "parameter" : 0.5 }).origin;
-                var z = dot(pt - axisOrigin, axisDir);
-                if (abs(z - endZ) < 1e-3 * millimeter)
-                    profileEdges = append(profileEdges, edge);
-            }
-        }
-
-        if (size(profileEdges) == 0)
-            throw "端面上未找到齿廓边。";
-
-        // ---------- 4. 按连通环分组, 选半径最大的环(齿顶外环) ---------------
-        var processed = new box([]);
-        var loops = []; // 每个元素是边数组
-        for (var edge in profileEdges)
-        {
-            var already = false;
-            for (var e in processed[])
-            {
-                if (e == edge)
-                {
-                    already = true;
-                    break;
-                }
-            }
-            if (already)
-                continue;
-
-            var loopEdges;
-            try silent
-            {
-                loopEdges = evaluateQuery(context, qLoopEdges(edge));
-            }
-            if (loopEdges == undefined || size(loopEdges) == 0)
-                loopEdges = [edge];
-
-            loops = append(loops, loopEdges);
-            for (var e in loopEdges)
-                processed[] = append(processed[], e);
-        }
-
-        // 选半径最大的环
-        var outerLoop = loops[0];
-        var outerMaxR = 0 * millimeter;
-        for (var loop in loops)
-        {
-            var maxR = 0 * millimeter;
-            for (var edge in loop)
-            {
-                try silent
-                {
-                    var pt = evEdgeTangentLine(context, { "edge" : edge, "parameter" : 0.5 }).origin;
-                    var r = radialDistance(pt, axisOrigin, axisDir);
-                    if (r > maxR)
-                        maxR = r;
-                }
-            }
-            if (maxR > outerMaxR)
-            {
-                outerMaxR = maxR;
-                outerLoop = loop;
-            }
-        }
-
-        // 绿色高亮齿顶外环
-        for (var e in outerLoop)
-            addDebugEntities(context, e, DebugColor.GREEN);
-
-        // ---------- 5. 沿外环密集采样, 计算每个点的角度和半径 ----------------
-        // 建立垂直于轴的参考坐标系
+        // ---------- 3~7. 遍历每个端面, 每个环, 选齿高最大的作为齿廓 ------------
+        // (旧代码只取 endFaces[0] 的最大半径环, 若该端面是光滑圆则齿高=0 直接失败)
         var refU;
         if (abs(axisDir[0]) < 0.9)
             refU = normalize(cross(axisDir, vector(1, 0, 0)));
@@ -167,70 +91,144 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             refU = normalize(cross(axisDir, vector(0, 1, 0)));
         var refV = cross(axisDir, refU);
 
-        var sampleData = []; // { "angle", "radius", "point" }
-        var samplesPerEdge = size(outerLoop) == 1 ? 360 : 20;
+        var bestResult = undefined; // { teeth, rMax, rMin, height, samples, loopEdges, loopCount, sampleData }
 
-        for (var edge in outerLoop)
+        for (var endFace in endFaces)
         {
-            for (var i = 0; i < samplesPerEdge; i += 1)
+            var endPlane = evPlane(context, { "face" : endFace });
+            var endZ = dot(endPlane.origin - axisOrigin, axisDir);
+
+            // 该端面上的边
+            var profileEdges = [];
+            for (var edge in allEdges)
             {
-                var t = (i + 0.5) / samplesPerEdge;
                 try silent
                 {
-                    var pt = evEdgeTangentLine(context, { "edge" : edge, "parameter" : t }).origin;
-                    var r = radialDistance(pt, axisOrigin, axisDir);
-                    var d = pt - axisOrigin;
-                    var proj = d - dot(d, axisDir) * axisDir;
-                    var du = dot(proj, refU);
-                    var dv = dot(proj, refV);
-                    var angle = atan2(dv, du);
-                    sampleData = append(sampleData, { "angle" : angle, "radius" : r, "point" : pt });
+                    var pt = evEdgeTangentLine(context, { "edge" : edge, "parameter" : 0.5 }).origin;
+                    var z = dot(pt - axisOrigin, axisDir);
+                    if (abs(z - endZ) < 1e-3 * millimeter)
+                        profileEdges = append(profileEdges, edge);
+                }
+            }
+            if (size(profileEdges) == 0)
+                continue;
+
+            // 分环
+            var processed = new box([]);
+            var loops = [];
+            for (var edge in profileEdges)
+            {
+                var already = false;
+                for (var e in processed[])
+                {
+                    if (e == edge) { already = true; break; }
+                }
+                if (already) continue;
+
+                var loopEdges;
+                try silent { loopEdges = evaluateQuery(context, qLoopEdges(edge)); }
+                if (loopEdges == undefined || size(loopEdges) == 0)
+                    loopEdges = [edge];
+
+                loops = append(loops, loopEdges);
+                for (var e in loopEdges)
+                    processed[] = append(processed[], e);
+            }
+
+            // 对每个环采样并计算齿高, 选齿高最大的环
+            for (var loop in loops)
+            {
+                var sampleData = [];
+                var samplesPerEdge = size(loop) == 1 ? 360 : 20;
+
+                for (var edge in loop)
+                {
+                    for (var i = 0; i < samplesPerEdge; i += 1)
+                    {
+                        var t = (i + 0.5) / samplesPerEdge;
+                        try silent
+                        {
+                            var pt = evEdgeTangentLine(context, { "edge" : edge, "parameter" : t }).origin;
+                            var r = radialDistance(pt, axisOrigin, axisDir);
+                            var d = pt - axisOrigin;
+                            var proj = d - dot(d, axisDir) * axisDir;
+                            var du = dot(proj, refU);
+                            var dv = dot(proj, refV);
+                            var angle = atan2(dv, du);
+                            sampleData = append(sampleData, { "angle" : angle, "radius" : r, "point" : pt });
+                        }
+                    }
+                }
+                if (size(sampleData) < 4)
+                    continue;
+
+                // 按角度排序
+                for (var i = 0; i < size(sampleData) - 1; i += 1)
+                {
+                    var minIdx = i;
+                    for (var j = i + 1; j < size(sampleData); j += 1)
+                    {
+                        if (sampleData[j].angle < sampleData[minIdx].angle)
+                            minIdx = j;
+                    }
+                    if (minIdx != i)
+                    {
+                        var tmp = sampleData[i];
+                        sampleData[i] = sampleData[minIdx];
+                        sampleData[minIdx] = tmp;
+                    }
+                }
+
+                var samples = [];
+                for (var sd in sampleData)
+                    samples = append(samples, sd.radius);
+
+                var rMax = samples[0];
+                var rMin = samples[0];
+                for (var s in samples)
+                {
+                    if (s > rMax) rMax = s;
+                    if (s < rMin) rMin = s;
+                }
+                var height = rMax - rMin;
+
+                // 选齿高最大的环(齿廓), 而非半径最大的环(可能是光滑圆)
+                if (bestResult == undefined || height > bestResult.height)
+                {
+                    var tipThreshold = rMin + height * 0.7;
+                    var teeth = (height / rMax < 0.005) ? 0 : countPeaksAbove(samples, tipThreshold);
+                    bestResult = {
+                        "teeth" : teeth,
+                        "rMax" : rMax,
+                        "rMin" : rMin,
+                        "height" : height,
+                        "samples" : samples,
+                        "sampleData" : sampleData,
+                        "loopEdges" : loop,
+                        "loopCount" : size(loop),
+                        "tipThreshold" : tipThreshold
+                    };
                 }
             }
         }
 
-        if (size(sampleData) < 4)
-            throw "采样点不足，无法分析齿廓。";
+        if (bestResult == undefined)
+            throw "未在任何端面上找到可分析的边环。";
 
-        // ---------- 6. 按角度排序, 提取半径序列 ------------------------------
-        // 选择排序(样本量 ≤ 360, O(n²) 可接受)
-        for (var i = 0; i < size(sampleData) - 1; i += 1)
-        {
-            var minIdx = i;
-            for (var j = i + 1; j < size(sampleData); j += 1)
-            {
-                if (sampleData[j].angle < sampleData[minIdx].angle)
-                    minIdx = j;
-            }
-            if (minIdx != i)
-            {
-                var tmp = sampleData[i];
-                sampleData[i] = sampleData[minIdx];
-                sampleData[minIdx] = tmp;
-            }
-        }
+        var teeth = bestResult.teeth;
+        var rMax = bestResult.rMax;
+        var rMin = bestResult.rMin;
+        var toothHeight = bestResult.height;
+        var sampleData = bestResult.sampleData;
+        var outerLoop = bestResult.loopEdges;
+        var tipThreshold = bestResult.tipThreshold;
 
-        var samples = [];
-        for (var sd in sampleData)
-            samples = append(samples, sd.radius);
+        // 绿色高亮选中的齿廓环
+        for (var e in outerLoop)
+            addDebugEntities(context, e, DebugColor.GREEN);
 
-        // ---------- 7. 计算阈值并数齿 ---------------------------------------
-        var rMax = samples[0];
-        var rMin = samples[0];
-        for (var s in samples)
-        {
-            if (s > rMax) rMax = s;
-            if (s < rMin) rMin = s;
-        }
-
-        var toothHeight = rMax - rMin;
-        var isSmooth = (rMax <= 0 * millimeter) || (toothHeight / rMax < 0.005);
-
-        var tipThreshold = rMin + toothHeight * 0.7;
-        var teeth = isSmooth ? 0 : countPeaksAbove(samples, tipThreshold);
-
-        // 红色标出齿顶采样点(即使齿数为0也标, 便于诊断)
-        if (!isSmooth)
+        // 红色标出齿顶采样点(齿数>0时才标)
+        if (teeth > 0)
         {
             for (var sd in sampleData)
             {
