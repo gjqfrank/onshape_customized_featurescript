@@ -248,11 +248,39 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
 
         // ---------- 8. 输出结果 ---------------------------------------------
-        // 在特征树上显示信息图标(悬停可见详细文字)
-        var infoMsg = "Tooth count: " ~ toString(teeth)
+        // 把齿数作为 computed parameter 显示在特征对话框顶部(最显眼)
+        setFeatureComputedParameter(context, id, {
+            "parameterId" : "computedToothCount",
+            "parameterName" : "Tooth count",
+            "parameterDisplayName" : "Tooth count",
+            "format" : { "formatString" : "#", "units" : "" },
+            "value" : teeth,
+            "rememberIfDefault" : false
+        });
+
+        // 齿顶/齿根半径也作为 computed parameter 显示
+        setFeatureComputedParameter(context, id, {
+            "parameterId" : "computedTipR",
+            "parameterName" : "Tip radius",
+            "parameterDisplayName" : "Tip radius",
+            "format" : { "formatString" : "#.###", "units" : "mm" },
+            "value" : rMax,
+            "rememberIfDefault" : false
+        });
+
+        setFeatureComputedParameter(context, id, {
+            "parameterId" : "computedRootR",
+            "parameterName" : "Root radius",
+            "parameterDisplayName" : "Root radius",
+            "format" : { "formatString" : "#.###", "units" : "mm" },
+            "value" : rMin,
+            "rememberIfDefault" : false
+        });
+
+        // 同时用 reportFeatureInfo 在特征树悬停时显示文字(备份)
+        reportFeatureInfo(context, id, "Tooth count: " ~ toString(teeth)
             ~ "  |  Tip radius: " ~ toString(rMax)
-            ~ "  |  Root radius: " ~ toString(rMin);
-        reportFeatureInfo(context, id, infoMsg);
+            ~ "  |  Root radius: " ~ toString(rMin));
 
         // 控制台输出(备份)
         println("已识别齿数: " ~ toString(teeth) ~ "  (齿顶半径 " ~ toString(rMax) ~ ", 齿根半径 " ~ toString(rMin) ~ ")");
