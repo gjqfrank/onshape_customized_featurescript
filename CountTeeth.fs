@@ -115,14 +115,14 @@ function countPeaksAbove(samples is array, threshold is ValueWithUnits) returns 
     return count;
 }
 
-annotation { "Feature Type Name" : "Count Teeth", "Feature Type Description" : "识别带轮/链轮的齿数" }
+annotation { "Feature Type Name" : "Count Teeth", "Feature Type Description" : "Count teeth of a pulley or sprocket" }
 export const countTeeth = defineFeature(function(context is Context, id is Id, definition is map)
     precondition
     {
         annotation { "Name" : "带轮/链轮零件", "Filter" : EntityType.BODY && BodyType.SOLID, "MaxNumberOfPicks" : 1 }
         definition.part is Query;
 
-        annotation { "Name" : "回转轴(圆柱面或圆边)", "Filter" : QueryFilterConstraint.ALLOWS_AXIS, "MaxNumberOfPicks" : 1 }
+        annotation { "Name" : "回转轴(圆柱面或圆边)", "Filter" : (EntityType.FACE && GeometryType.CYLINDER) || (EntityType.EDGE && GeometryType.CIRCLE), "MaxNumberOfPicks" : 1 }
         definition.axis is Query;
 
         annotation { "Name" : "用齿数重命名零件", "Default" : true }
