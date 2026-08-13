@@ -223,46 +223,48 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             if (s < rMin) rMin = s;
         }
 
-        if (rMax <= 0 * millimeter || (rMax - rMin) / rMax < 0.005)
+        var toothHeight = rMax - rMin;
+        var isSmooth = (rMax <= 0 * millimeter) || (toothHeight / rMax < 0.005);
+
+        var tipThreshold = rMin + toothHeight * 0.7;
+        var teeth = isSmooth ? 0 : countPeaksAbove(samples, tipThreshold);
+
+        // 红色标出齿顶采样点(即使齿数为0也标, 便于诊断)
+        if (!isSmooth)
         {
-            println("未检测到齿 —— 外轮廓近似为光滑整圆(例如 V 带轮)。");
-            return;
-        }
-
-        var tipThreshold = rMin + (rMax - rMin) * 0.7;
-        var teeth = countPeaksAbove(samples, tipThreshold);
-
-        if (teeth < 2)
-            throw "齿数异常(" ~ toString(teeth) ~ ")，请确认所选零件是带轮或链轮。";
-
-        // 红色标出齿顶采样点
-        for (var sd in sampleData)
-        {
-            if (sd.radius >= tipThreshold)
+            for (var sd in sampleData)
             {
-                try silent
+                if (sd.radius >= tipThreshold)
                 {
-                    debug(context, sd.point, DebugColor.RED);
+                    try silent
+                    {
+                        debug(context, sd.point, DebugColor.RED);
+                    }
                 }
             }
         }
 
-        // ---------- 8. 输出结果 ---------------------------------------------
-        // 把齿数作为 computed parameter 显示在特征对话框顶部(最显眼)
+        // ---------- 8. 输出结果(永远显示, 不静默返回) ----------------------
+        // 诊断信息: 选中环的边数、采样点数、齿高
+        var diagMsg = "Teeth: " ~ toString(teeth)
+            ~ " | Tip R: " ~ toString(rMax)
+            ~ " | Root R: " ~ toString(rMin)
+            ~ " | Height: " ~ toString(toothHeight)
+            ~ " | Samples: " ~ toString(size(sampleData))
+            ~ " | Loop edges: " ~ toString(size(outerLoop));
+
+        // 1) computed parameter —— 显示在特征对话框顶部
         setFeatureComputedParameter(context, id, {
             "parameterId" : "computedToothCount",
             "parameterName" : "Tooth count",
-            "parameterDisplayName" : "Tooth count",
             "format" : { "formatString" : "#", "units" : "" },
             "value" : teeth,
             "rememberIfDefault" : false
         });
 
-        // 齿顶/齿根半径也作为 computed parameter 显示
         setFeatureComputedParameter(context, id, {
             "parameterId" : "computedTipR",
             "parameterName" : "Tip radius",
-            "parameterDisplayName" : "Tip radius",
             "format" : { "formatString" : "#.###", "units" : "mm" },
             "value" : rMax,
             "rememberIfDefault" : false
@@ -271,21 +273,26 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         setFeatureComputedParameter(context, id, {
             "parameterId" : "computedRootR",
             "parameterName" : "Root radius",
-            "parameterDisplayName" : "Root radius",
             "format" : { "formatString" : "#.###", "units" : "mm" },
             "value" : rMin,
             "rememberIfDefault" : false
         });
 
-        // 同时用 reportFeatureInfo 在特征树悬停时显示文字(备份)
-        reportFeatureInfo(context, id, "Tooth count: " ~ toString(teeth)
-            ~ "  |  Tip radius: " ~ toString(rMax)
-            ~ "  |  Root radius: " ~ toString(rMin));
+        setFeatureComputedParameter(context, id, {
+            "parameterId" : "computedHeight",
+            "parameterName" : "Tooth height",
+            "format" : { "formatString" : "#.###", "units" : "mm" },
+            "value" : toothHeight,
+            "rememberIfDefault" : false
+        });
 
-        // 控制台输出(备份)
-        println("已识别齿数: " ~ toString(teeth) ~ "  (齿顶半径 " ~ toString(rMax) ~ ", 齿根半径 " ~ toString(rMin) ~ ")");
+        // 2) reportFeatureInfo —— 特征树悬停显示诊断信息
+        reportFeatureInfo(context, id, diagMsg);
 
-        // 可选: 重命名零件(默认关闭)
-        if (definition.rename)
+        // 3) 控制台输出
+        println(diagMsg);
+
+        // 4) 可选: 重命名零件(默认关闭)
+        if (definition.rename && teeth > 0)
             setProperty(context, { "entities" : definition.part, "propertyName" : PropertyType.NAME, "value" : definition.namePrefix ~ " (" ~ toString(teeth) ~ "T)" });
     });
