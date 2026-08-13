@@ -119,16 +119,16 @@ annotation { "Feature Type Name" : "Count Teeth", "Feature Type Description" : "
 export const countTeeth = defineFeature(function(context is Context, id is Id, definition is map)
     precondition
     {
-        annotation { "Name" : "带轮/链轮零件", "Filter" : EntityType.BODY && BodyType.SOLID, "MaxNumberOfPicks" : 1 }
+        annotation { "Name" : "Pulley or sprocket part", "Filter" : EntityType.BODY && BodyType.SOLID, "MaxNumberOfPicks" : 1 }
         definition.part is Query;
 
-        annotation { "Name" : "回转轴(圆柱面或圆边)", "Filter" : (EntityType.FACE && GeometryType.CYLINDER) || (EntityType.EDGE && GeometryType.CIRCLE), "MaxNumberOfPicks" : 1 }
+        annotation { "Name" : "Axis (cylindrical face or circular edge)", "Filter" : (EntityType.FACE && GeometryType.CYLINDER) || (EntityType.EDGE && GeometryType.CIRCLE), "MaxNumberOfPicks" : 1 }
         definition.axis is Query;
 
-        annotation { "Name" : "用齿数重命名零件", "Default" : true }
+        annotation { "Name" : "Rename part using tooth count", "Default" : true }
         definition.rename is boolean;
 
-        annotation { "Name" : "名称前缀", "Default" : "Pulley" }
+        annotation { "Name" : "Name prefix", "Default" : "Pulley" }
         definition.namePrefix is string;
     }
     {
