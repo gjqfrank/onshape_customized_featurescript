@@ -51,7 +51,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         annotation { "Name" : "Axis (cylindrical face or circular edge)", "Filter" : (EntityType.FACE && GeometryType.CYLINDER) || (EntityType.EDGE && GeometryType.CIRCLE), "MaxNumberOfPicks" : 1 }
         definition.axis is Query;
 
-        annotation { "Name" : "Rename part using tooth count", "Default" : true }
+        annotation { "Name" : "Rename part using tooth count", "Default" : false }
         definition.rename is boolean;
 
         annotation { "Name" : "Name prefix", "Default" : "Pulley" }
@@ -248,8 +248,16 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
 
         // ---------- 8. 输出结果 ---------------------------------------------
+        // 在特征树上显示信息图标(悬停可见详细文字)
+        var infoMsg = "Tooth count: " ~ toString(teeth)
+            ~ "  |  Tip radius: " ~ toString(rMax)
+            ~ "  |  Root radius: " ~ toString(rMin);
+        reportFeatureInfo(context, id, infoMsg);
+
+        // 控制台输出(备份)
+        println("已识别齿数: " ~ toString(teeth) ~ "  (齿顶半径 " ~ toString(rMax) ~ ", 齿根半径 " ~ toString(rMin) ~ ")");
+
+        // 可选: 重命名零件(默认关闭)
         if (definition.rename)
             setProperty(context, { "entities" : definition.part, "propertyName" : PropertyType.NAME, "value" : definition.namePrefix ~ " (" ~ toString(teeth) ~ "T)" });
-
-        println("已识别齿数: " ~ toString(teeth) ~ "  (齿顶半径 " ~ toString(rMax) ~ ", 齿根半径 " ~ toString(rMin) ~ ")");
     });
