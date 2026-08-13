@@ -75,9 +75,11 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             refU = normalize(cross(axisDir, vector(0, 1, 0)));
         var refV = cross(axisDir, refU);
 
-        // ---------- 3. 对所有边分环, 选径向变化最大的环(=齿廓) ---------------
-        // 注意: 单条周期样条(整圈一条边)只有1个中点, 中点法无法估算齿高。
-        // 所以粗筛阶段对每个环采样8个点(而非1个中点)来估算径向变化。
+        // ---------- 3. 对所有边分环, 选同心且径向变化最大的环(=齿廓) --------
+        // 注意:
+        //   - 单条周期样条(整圈一条边)只有1个中点, 中点法无法估算齿高。
+        //   - 偏心减重孔的径向变化(=2×孔半径)可能远大于齿高, 会被误选。
+        // 所以粗筛阶段: 每条边采样8点, 同时计算径向变化和偏心距, 过滤偏心环。
         var processed = new box([]);
         var bestLoop = undefined;
         var bestHeight = -1 * meter;
@@ -100,9 +102,12 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             for (var e in loopEdges)
                 processed[] = append(processed[], e);
 
-            // 粗筛: 每条边采样8个点估算径向变化(对单条样条也有效)
+            // 粗筛: 每条边采样8个点, 记录半径和 refU/refV 坐标(用于算偏心)
             var rMax = 0 * meter;
             var rMin = 1e10 * meter;
+            var sumU = 0 * meter;
+            var sumV = 0 * meter;
+            var ptCount = 0;
             var probePerEdge = 8;
             for (var e in loopEdges)
             {
@@ -115,9 +120,26 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                         var r = radialDistance(pt, axisOrigin, axisDir);
                         if (r > rMax) rMax = r;
                         if (r < rMin) rMin = r;
+                        var d = pt - axisOrigin;
+                        var proj = d - dot(d, axisDir) * axisDir;
+                        sumU += dot(proj, refU);
+                        sumV += dot(proj, refV);
+                        ptCount += 1;
                     }
                 }
             }
+            if (ptCount == 0) continue;
+
+            // 偏心距 = 采样点平均位置到主轴的距离
+            var meanU = sumU / ptCount;
+            var meanV = sumV / ptCount;
+            var eccentricity = norm(vector(meanU, meanV, 0 * meter));
+            var meanRadius = (rMax + rMin) / 2;
+
+            // 过滤偏心环: 偏心距 > 平均半径5% 的视为非同心(减重孔等), 跳过
+            if (meanRadius > 0 * meter && eccentricity / meanRadius > 0.05)
+                continue;
+
             var height = rMax - rMin;
             if (height > bestHeight)
             {
