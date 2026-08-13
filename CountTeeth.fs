@@ -75,20 +75,9 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             refU = normalize(cross(axisDir, vector(0, 1, 0)));
         var refV = cross(axisDir, refU);
 
-        // 预计算: 每条边的中点半径(用 box 确保索引对齐)
-        var edgeInfo = new box([]);
-        for (var edge in allEdges)
-        {
-            var info = undefined;
-            try silent
-            {
-                var pt = evEdgeTangentLine(context, { "edge" : edge, "parameter" : 0.5 }).origin;
-                info = radialDistance(pt, axisOrigin, axisDir);
-            }
-            edgeInfo[] = append(edgeInfo[], info);
-        }
-
         // ---------- 3. 对所有边分环, 选径向变化最大的环(=齿廓) ---------------
+        // 注意: 单条周期样条(整圈一条边)只有1个中点, 中点法无法估算齿高。
+        // 所以粗筛阶段对每个环采样8个点(而非1个中点)来估算径向变化。
         var processed = new box([]);
         var bestLoop = undefined;
         var bestHeight = -1 * meter;
@@ -111,20 +100,23 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             for (var e in loopEdges)
                 processed[] = append(processed[], e);
 
-            // 用预计算中点半径估算该环的径向变化(齿高)
+            // 粗筛: 每条边采样8个点估算径向变化(对单条样条也有效)
             var rMax = 0 * meter;
             var rMin = 1e10 * meter;
+            var probePerEdge = 8;
             for (var e in loopEdges)
             {
-                var idx = -1;
-                for (var j = 0; j < size(allEdges); j += 1)
+                for (var k = 0; k < probePerEdge; k += 1)
                 {
-                    if (allEdges[j] == e) { idx = j; break; }
+                    try silent
+                    {
+                        var t = (k + 0.5) / probePerEdge;
+                        var pt = evEdgeTangentLine(context, { "edge" : e, "parameter" : t }).origin;
+                        var r = radialDistance(pt, axisOrigin, axisDir);
+                        if (r > rMax) rMax = r;
+                        if (r < rMin) rMin = r;
+                    }
                 }
-                if (idx < 0 || edgeInfo[][idx] == undefined) continue;
-                var r = edgeInfo[][idx];
-                if (r > rMax) rMax = r;
-                if (r < rMin) rMin = r;
             }
             var height = rMax - rMin;
             if (height > bestHeight)
