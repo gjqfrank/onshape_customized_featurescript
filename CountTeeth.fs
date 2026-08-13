@@ -245,7 +245,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
 
         // ---------- 8. 输出结果(永远显示, 不静默返回) ----------------------
-        // 诊断信息: 选中环的边数、采样点数、齿高
+        // 诊断信息
         var diagMsg = "Teeth: " ~ toString(teeth)
             ~ " | Tip R: " ~ toString(rMax)
             ~ " | Root R: " ~ toString(rMin)
@@ -253,40 +253,11 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             ~ " | Samples: " ~ toString(size(sampleData))
             ~ " | Loop edges: " ~ toString(size(outerLoop));
 
-        // 1) computed parameter —— 显示在特征对话框顶部
-        setFeatureComputedParameter(context, id, {
-            "parameterId" : "computedToothCount",
-            "parameterName" : "Tooth count",
-            "format" : { "formatString" : "#", "units" : "" },
-            "value" : teeth,
-            "rememberIfDefault" : false
-        });
+        // 1) 把齿数写进特征名 —— 直接在特征树里可见, 无需打开对话框
+        var featureName = "Count Teeth (" ~ toString(teeth) ~ "T)";
+        setProperty(context, { "entities" : qCreatedBy(id, EntityType.FEATURE), "propertyName" : PropertyType.NAME, "value" : featureName });
 
-        setFeatureComputedParameter(context, id, {
-            "parameterId" : "computedTipR",
-            "parameterName" : "Tip radius",
-            "format" : { "formatString" : "#.###", "units" : "mm" },
-            "value" : rMax,
-            "rememberIfDefault" : false
-        });
-
-        setFeatureComputedParameter(context, id, {
-            "parameterId" : "computedRootR",
-            "parameterName" : "Root radius",
-            "format" : { "formatString" : "#.###", "units" : "mm" },
-            "value" : rMin,
-            "rememberIfDefault" : false
-        });
-
-        setFeatureComputedParameter(context, id, {
-            "parameterId" : "computedHeight",
-            "parameterName" : "Tooth height",
-            "format" : { "formatString" : "#.###", "units" : "mm" },
-            "value" : toothHeight,
-            "rememberIfDefault" : false
-        });
-
-        // 2) reportFeatureInfo —— 特征树悬停显示诊断信息
+        // 2) reportFeatureInfo —— 特征树悬停显示完整诊断信息
         reportFeatureInfo(context, id, diagMsg);
 
         // 3) 控制台输出
