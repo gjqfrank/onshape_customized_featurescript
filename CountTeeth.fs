@@ -63,23 +63,9 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         var axisOrigin is Vector = ax.origin;
         var axisDir is Vector = ax.direction;
 
-        // ---------- 2. 找到垂直于轴的平面端面 --------------------------------
-        var allFaces = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.FACE));
-        var endFaces = [];
-        for (var face in allFaces)
-        {
-            try silent
-            {
-                var plane = evPlane(context, { "face" : face });
-                if (abs(dot(plane.normal, axisDir)) > 0.999)
-                    endFaces = append(endFaces, face);
-            }
-        }
-
-        if (size(endFaces) == 0)
-            throw "未找到垂直于轴的平面端面。请确认所选零件是带轮或链轮。";
-
-        // 收集所有边, 预计算每条边的中点(一次性, 避免重复调用 evEdgeTangentLine)
+        // ---------- 2. 收集所有边, 预计算中点半径 --------------------------------
+        // 不再限制"⊥轴的平面端面"——锥形齿/根圆端面会让齿廓边不在端面上。
+        // 改为搜索所有边, 选径向变化最大的环(齿廓天然径向变化最大)。
         var allEdges = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.EDGE));
 
         var refU;
@@ -89,7 +75,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             refU = normalize(cross(axisDir, vector(0, 1, 0)));
         var refV = cross(axisDir, refU);
 
-        // 预计算: 每条边的中点 { z, radius }(用 box 确保索引对齐)
+        // 预计算: 每条边的中点半径(用 box 确保索引对齐)
         var edgeInfo = new box([]);
         for (var edge in allEdges)
         {
@@ -97,86 +83,61 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             try silent
             {
                 var pt = evEdgeTangentLine(context, { "edge" : edge, "parameter" : 0.5 }).origin;
-                info = { "z" : dot(pt - axisOrigin, axisDir), "radius" : radialDistance(pt, axisOrigin, axisDir) };
+                info = radialDistance(pt, axisOrigin, axisDir);
             }
             edgeInfo[] = append(edgeInfo[], info);
         }
 
-        // ---------- 3~7. 遍历每个端面, 每个环, 选齿高最大的作为齿廓 ------------
-        // 两阶段优化: 阶段1 用每条边中点粗筛齿高; 阶段2 只对选中环做360点精算
-        var bestLoop = undefined; // 齿高最大的环(边数组)
+        // ---------- 3. 对所有边分环, 选径向变化最大的环(=齿廓) ---------------
+        var processed = new box([]);
+        var bestLoop = undefined;
         var bestHeight = -1 * meter;
 
-        for (var endFace in endFaces)
+        for (var i = 0; i < size(allEdges); i += 1)
         {
-            var endPlane = evPlane(context, { "face" : endFace });
-            var endZ = dot(endPlane.origin - axisOrigin, axisDir);
-
-            // 该端面上的边(用预计算的中点 z 筛选)
-            var profileEdges = [];
-            for (var i = 0; i < size(allEdges); i += 1)
+            var edge = allEdges[i];
+            var already = false;
+            for (var e in processed[])
             {
-                var info = edgeInfo[][i];
-                if (info == undefined) continue;
-                if (abs(info.z - endZ) < 1e-3 * millimeter)
-                    profileEdges = append(profileEdges, allEdges[i]);
+                if (e == edge) { already = true; break; }
             }
-            if (size(profileEdges) == 0)
-                continue;
+            if (already) continue;
 
-            // 分环
-            var processed = new box([]);
-            var loops = [];
-            for (var edge in profileEdges)
+            var loopEdges;
+            try silent { loopEdges = evaluateQuery(context, qLoopEdges(edge)); }
+            if (loopEdges == undefined || size(loopEdges) == 0)
+                loopEdges = [edge];
+
+            for (var e in loopEdges)
+                processed[] = append(processed[], e);
+
+            // 用预计算中点半径估算该环的径向变化(齿高)
+            var rMax = 0 * meter;
+            var rMin = 1e10 * meter;
+            for (var e in loopEdges)
             {
-                var already = false;
-                for (var e in processed[])
+                var idx = -1;
+                for (var j = 0; j < size(allEdges); j += 1)
                 {
-                    if (e == edge) { already = true; break; }
+                    if (allEdges[j] == e) { idx = j; break; }
                 }
-                if (already) continue;
-
-                var loopEdges;
-                try silent { loopEdges = evaluateQuery(context, qLoopEdges(edge)); }
-                if (loopEdges == undefined || size(loopEdges) == 0)
-                    loopEdges = [edge];
-
-                loops = append(loops, loopEdges);
-                for (var e in loopEdges)
-                    processed[] = append(processed[], e);
+                if (idx < 0 || edgeInfo[][idx] == undefined) continue;
+                var r = edgeInfo[][idx];
+                if (r > rMax) rMax = r;
+                if (r < rMin) rMin = r;
             }
-
-            // 阶段1: 用预计算中点半径粗筛每个环的齿高(不调用 evEdgeTangentLine)
-            for (var loop in loops)
+            var height = rMax - rMin;
+            if (height > bestHeight)
             {
-                var rMax = 0 * meter;
-                var rMin = 1e10 * meter;
-                for (var edge in loop)
-                {
-                    // 找该 edge 在 allEdges 中的索引, 取预计算的 radius
-                    var idx = -1;
-                    for (var i = 0; i < size(allEdges); i += 1)
-                    {
-                        if (allEdges[i] == edge) { idx = i; break; }
-                    }
-                    if (idx < 0 || edgeInfo[][idx] == undefined) continue;
-                    var r = edgeInfo[][idx].radius;
-                    if (r > rMax) rMax = r;
-                    if (r < rMin) rMin = r;
-                }
-                var height = rMax - rMin;
-                if (height > bestHeight)
-                {
-                    bestHeight = height;
-                    bestLoop = loop;
-                }
+                bestHeight = height;
+                bestLoop = loopEdges;
             }
         }
 
         if (bestLoop == undefined)
-            throw "未在任何端面上找到可分析的边环。";
+            throw "未找到可分析的边环。";
 
-        // 阶段2: 只对选中的环做360点密集采样, 精确数齿
+        // ---------- 4. 对选中的环做360点密集采样, 精确数齿 -------------------
         var sampleData = [];
         var samplesPerEdge = size(bestLoop) == 1 ? 360 : 20;
 
