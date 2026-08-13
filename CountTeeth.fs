@@ -253,17 +253,13 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             ~ " | Samples: " ~ toString(size(sampleData))
             ~ " | Loop edges: " ~ toString(size(outerLoop));
 
-        // 1) 把齿数写进特征名 —— 直接在特征树里可见, 无需打开对话框
-        var featureName = "Count Teeth (" ~ toString(teeth) ~ "T)";
-        setProperty(context, { "entities" : qCreatedBy(id, EntityType.FEATURE), "propertyName" : PropertyType.NAME, "value" : featureName });
-
-        // 2) reportFeatureInfo —— 特征树悬停显示完整诊断信息
+        // 1) reportFeatureInfo —— 特征上显示蓝色 ℹ️ 图标, 悬停可见齿数
         reportFeatureInfo(context, id, diagMsg);
 
-        // 3) 控制台输出
+        // 2) 控制台输出
         println(diagMsg);
 
-        // 4) 可选: 重命名零件(默认关闭)
+        // 3) 可选: 重命名零件(默认关闭)
         if (definition.rename && teeth > 0)
             setProperty(context, { "entities" : definition.part, "propertyName" : PropertyType.NAME, "value" : definition.namePrefix ~ " (" ~ toString(teeth) ~ "T)" });
     });
