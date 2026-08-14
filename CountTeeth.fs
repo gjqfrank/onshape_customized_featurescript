@@ -178,9 +178,10 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 var r = radialDistance(pt, axisOrigin, axisDir);
                 var d = pt - axisOrigin;
                 var proj = d - dot(d, axisDir) * axisDir;
-                var angle = atan2(dot(proj, refV), dot(proj, refU));
+                // atan2返回带单位的弧度, 除以radian得到纯数字, 再转度数便于比较
+                var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
                 if (angle < 0)
-                    angle += 2 * PI;
+                    angle += 360;
                 vertexData = append(vertexData, { "angle" : angle, "radius" : r, "point" : pt });
                 if (r > vertexMaxR) vertexMaxR = r;
             }
@@ -200,12 +201,12 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             return a.angle - b.angle;
         });
 
-        // 聚类: 相邻角度差 > 5° = 新簇
+        // 聚类: 相邻角度差 > 5度 = 新簇(角度已转为纯数字度数)
         var teeth = 0;
         if (size(tipVertices) > 0)
         {
             teeth = 1;
-            var clusterThreshold = 5 * PI / 180; // 5度(弧度)
+            var clusterThreshold = 5; // 5度
             for (var i = 1; i < size(tipVertices); i += 1)
             {
                 var gap = tipVertices[i].angle - tipVertices[i - 1].angle;
@@ -213,7 +214,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                     teeth += 1;
             }
             // 检查首尾是否跨越0°(环形)
-            var wrapGap = (2 * PI - tipVertices[size(tipVertices) - 1].angle) + tipVertices[0].angle;
+            var wrapGap = (360 - tipVertices[size(tipVertices) - 1].angle) + tipVertices[0].angle;
             if (wrapGap > clusterThreshold)
                 teeth += 1;
             else
