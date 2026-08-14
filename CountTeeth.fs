@@ -216,6 +216,8 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             }
         }
         // 选角度覆盖最广的桶 = 齿顶圆半径(齿尖顶点覆盖全圈)
+        // 齿顶平面的顶点半径可能略有不同(平面有宽度), 分散在多个相邻桶里.
+        // 合并相邻高覆盖桶: 以最高覆盖桶为中心, 向两边扩展, 直到覆盖数 < bestCover*0.5
         var bestBin = 0;
         var bestCover = 0;
         for (var i = 0; i < NBINS; i += 1)
@@ -226,15 +228,33 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 bestBin = i;
             }
         }
-        var tipCircleR = minVR + rRange * (bestBin + 0.5) / NBINS;
+        var tipLoBin = bestBin;
+        var tipHiBin = bestBin;
+        var coverThresh = bestCover * 0.5;
+        for (var i = bestBin - 1; i >= 0; i -= 1)
+        {
+            if (bucketAngleCover[i] >= coverThresh) tipLoBin = i;
+            else break;
+        }
+        for (var i = bestBin + 1; i < NBINS; i += 1)
+        {
+            if (bucketAngleCover[i] >= coverThresh) tipHiBin = i;
+            else break;
+        }
+        var tipCircleR = minVR + rRange * (tipLoBin + tipHiBin + 1) / 2 / NBINS;
+        var tipRLo = minVR + rRange * tipLoBin / NBINS;
+        var tipRHi = minVR + rRange * (tipHiBin + 1) / NBINS;
 
-        // 齿尖顶点: radius在tipCircleR附近(±2%全局maxR, 收紧容差排除字样顶点)
+        // 齿尖顶点: radius在合并后的[tipRLo, tipRHi]范围内(适应齿顶平面多顶点)
+        // 同时加±2%全局maxR容差, 排除字样顶点
         var tipTol = globalMaxVR * 0.02;
+        var tipLo = tipRLo - tipTol;
+        var tipHi = tipRHi + tipTol;
         var tipVertexCount = 0;
         var tipAngles = []; // 角度(度)
         for (var vp in vertexPoints)
         {
-            if (abs(vp.radius - tipCircleR) < tipTol)
+            if (vp.radius >= tipLo && vp.radius <= tipHi)
             {
                 var d = vp.point - axisOrigin;
                 var proj = d - dot(d, axisDir) * axisDir;
@@ -296,7 +316,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         // 红点标出过滤后的齿尖顶点
         for (var vp in vertexPoints)
         {
-            if (abs(vp.radius - tipCircleR) < tipTol)
+            if (vp.radius >= tipLo && vp.radius <= tipHi)
             {
                 var d = vp.point - axisOrigin;
                 var proj = d - dot(d, axisDir) * axisDir;
@@ -361,6 +381,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         var diagMsg = "Teeth: " ~ toString(teeth)
             ~ " | Tip vertices: " ~ toString(tipVertexCount)
             ~ " | TipCircleR: " ~ toString(tipCircleR)
+            ~ " | TipRange: [" ~ toString(tipLo) ~ ", " ~ toString(tipHi) ~ "]"
             ~ " | AngleCover: " ~ toString(bestCover) ~ "/" ~ toString(NANGLE)
             ~ " | GlobalMaxVR: " ~ toString(globalMaxVR)
             ~ " | BigGaps: " ~ toString(bigGaps)
