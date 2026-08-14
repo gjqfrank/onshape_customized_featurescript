@@ -153,10 +153,10 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
 
         // ---------- 5. 齿尖顶点聚类数齿(主方法) -----------------------------
         // 红点(齿尖顶点)位置准, 但每齿可能有1~4个顶点(平顶齿两角+圆角).
-        // pulley注意: 上下有凸缘(flange), 比齿顶高. 必须先过滤掉凸缘顶点.
-        // 策略: 收集所有顶点的(角度,半径,轴向位置), 按轴向位置排序,
-        //   去掉两端各10%的顶点(凸缘区), 用中间80%找maxR和齿尖.
-        //   对gear(无凸缘)也适用: 去掉两端10%不影响齿尖(齿尖在中间).
+        // pulley注意: 上下有凸缘(flange), 比齿顶高, 凸缘顶点半径更大.
+        //   策略: 不能直接取全局maxR(会被凸缘占据). 改用半径直方图找"齿顶圆"半径:
+        //   把顶点按半径分桶, 找顶点数最多的桶(齿尖顶点最多), 该桶半径=tipCircleR.
+        //   凸缘顶点数少(每圈凸缘只有少量顶点), 不会主导直方图.
         var tipR = globalMaxR;
 
         var allVertices = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.VERTEX));
@@ -167,32 +167,54 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             {
                 var pt = evVertexPoint(context, { "vertex" : v });
                 var r = radialDistance(pt, axisOrigin, axisDir);
-                var axialPos = dot(pt - axisOrigin, axisDir);
-                vertexPoints = append(vertexPoints, { "point" : pt, "radius" : r, "axialPos" : axialPos });
+                vertexPoints = append(vertexPoints, { "point" : pt, "radius" : r });
             }
         }
 
-        // 按轴向位置排序, 找中间80%的轴向范围(去掉两端各10%, 排除凸缘)
-        var sortedByAxial = sort(vertexPoints, function(a, b) { return (a.axialPos - b.axialPos) / meter; });
-        var nVerts = size(sortedByAxial);
-        var trimCount = floor(nVerts * 0.10);
-        var axialLo = sortedByAxial[trimCount].axialPos;
-        var axialHi = sortedByAxial[nVerts - 1 - trimCount].axialPos;
-
-        // 在中间轴向范围内找最大半径(齿顶圆, 排除凸缘)
-        var vertexMaxR = 0 * meter;
+        // 找全局maxR(含凸缘)和minR, 用于直方图范围
+        var globalMaxVR = 0 * meter;
+        var minVR = vertexPoints[0].radius;
         for (var vp in vertexPoints)
         {
-            if (vp.axialPos >= axialLo && vp.axialPos <= axialHi && vp.radius > vertexMaxR)
-                vertexMaxR = vp.radius;
+            if (vp.radius > globalMaxVR) globalMaxVR = vp.radius;
+            if (vp.radius < minVR) minVR = vp.radius;
         }
 
-        // 齿尖顶点: 在中间轴向范围 且 radius > 98% vertexMaxR
+        // 半径直方图: 分50桶, 找顶点数最多的桶 = 齿顶圆半径
+        var NBINS = 50;
+        var rHisto = [];
+        for (var i = 0; i < NBINS; i += 1)
+            rHisto = append(rHisto, 0);
+        var rRange = globalMaxVR - minVR;
+        if (rRange == 0 * meter) rRange = 1 * meter;
+        for (var vp in vertexPoints)
+        {
+            var frac = (vp.radius - minVR) / rRange;
+            if (frac < 0) frac = 0;
+            if (frac > 0.999) frac = 0.999;
+            rHisto[floor(frac * NBINS)] += 1;
+        }
+        // 找最高桶(齿顶圆半径所在), 但只在半径>50%maxR的桶里找(排除内孔)
+        var bestBin = 0;
+        var bestCount = 0;
+        for (var i = 0; i < NBINS; i += 1)
+        {
+            var binR = minVR + rRange * (i + 0.5) / NBINS;
+            if (binR > globalMaxVR * 0.5 && rHisto[i] > bestCount)
+            {
+                bestCount = rHisto[i];
+                bestBin = i;
+            }
+        }
+        var tipCircleR = minVR + rRange * (bestBin + 0.5) / NBINS;
+
+        // 齿尖顶点: radius在tipCircleR附近(±5%全局maxR, 容纳齿顶圆角多点)
+        var tipTol = globalMaxVR * 0.05;
         var tipVertexCount = 0;
         var tipAngles = []; // 角度(度)
         for (var vp in vertexPoints)
         {
-            if (vp.axialPos >= axialLo && vp.axialPos <= axialHi && vp.radius > vertexMaxR * 0.98)
+            if (abs(vp.radius - tipCircleR) < tipTol)
             {
                 debug(context, vp.point, DebugColor.RED);
                 tipVertexCount += 1;
@@ -206,7 +228,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
 
         if (tipVertexCount < 3)
-            throw "Too few tip vertices (" ~ toString(tipVertexCount) ~ ") for clustering.";
+            throw "Too few tip vertices (" ~ toString(tipVertexCount) ~ ") for clustering. tipCircleR: " ~ toString(tipCircleR);
 
         // 按角度排序
         tipAngles = sort(tipAngles, function(a, b) { return a - b; });
@@ -290,14 +312,13 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         // ---------- 6. 输出 -------------------------------------------------
         var diagMsg = "Teeth: " ~ toString(teeth)
             ~ " | Tip vertices: " ~ toString(tipVertexCount)
+            ~ " | TipCircleR: " ~ toString(tipCircleR)
+            ~ " | GlobalMaxVR: " ~ toString(globalMaxVR)
             ~ " | BigGaps: " ~ toString(bigGaps)
             ~ " | SmallGaps: " ~ toString(smallGapCount)
             ~ " | Thresh: " ~ toString(round(thresh * 10) / 10)
             ~ " | BigGapAvg: " ~ toString(round(bigGapAvg * 10) / 10)
             ~ " | ExpectedGap: " ~ toString(round(expectedGap * 10) / 10)
-            ~ " | MinGap: " ~ toString(round(minGap * 10) / 10)
-            ~ " | MaxGap: " ~ toString(round(maxGap * 10) / 10)
-            ~ " | Tip R: " ~ toString(tipR)
             ~ " | Edges: " ~ toString(size(allEdges));
 
         reportFeatureInfo(context, id, diagMsg);
