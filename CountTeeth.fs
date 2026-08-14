@@ -201,24 +201,32 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             return a.angle - b.angle;
         });
 
-        // 聚类: 簇数 = gap > 阈值的次数(环形, 含首尾wrap)
-        // 修正: 旧逻辑在密集覆盖时首尾被错误减1导致teeth=0
+        // 聚类: 自适应阈值 = 360/(预估齿数) * 0.5
+        // 预估: 稀疏角度覆盖(max-min角度范围) / 平均簇大小
+        // 简化: 用顶点角度的中位间距 * 4 作为阈值(同齿顶点间距 << 齿间距)
         var teeth = 0;
-        if (size(tipVertices) > 0)
+        if (size(tipVertices) >= 2)
         {
-            var clusterThreshold = 5; // 5度
-            // 数所有内部gap > 阈值的次数
+            // 计算相邻角度差的中位数(排除wrap)
+            var gaps = [];
+            for (var i = 1; i < size(tipVertices); i += 1)
+                gaps = append(gaps, tipVertices[i].angle - tipVertices[i - 1].angle);
+            gaps = sort(gaps, function(a, b) { return a - b; });
+            var medianGap = gaps[size(gaps) / 2];
+
+            // 阈值 = 中位间距 * 3 (同齿顶点间距小, 齿间间距大)
+            // 如果某gap > 3倍中位数, 认为是齿间分隔
+            var clusterThreshold = medianGap * 3;
+
+            // 数所有gap > 阈值的次数(含wrap)
             for (var i = 1; i < size(tipVertices); i += 1)
             {
-                var gap = tipVertices[i].angle - tipVertices[i - 1].angle;
-                if (gap > clusterThreshold)
+                if (tipVertices[i].angle - tipVertices[i - 1].angle > clusterThreshold)
                     teeth += 1;
             }
-            // 检查首尾wrap gap
             var wrapGap = (360 - tipVertices[size(tipVertices) - 1].angle) + tipVertices[0].angle;
             if (wrapGap > clusterThreshold)
                 teeth += 1;
-            // 如果没有任何gap(所有点在一个簇里), teeth=0, 修正为1
             if (teeth == 0)
                 teeth = 1;
         }
