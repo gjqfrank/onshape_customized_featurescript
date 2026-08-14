@@ -153,10 +153,17 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
 
         // ---------- 5. 齿尖顶点聚类数齿(主方法) -----------------------------
         // 红点(齿尖顶点)位置准, 但每齿可能有1~4个顶点(平顶齿两角+圆角).
-        // 自相关法的问题: N翻倍时(同齿2顶点)或N过小时(虚假周期)分数也高.
-        // 新方法: 角度差聚类 — 把角度差<阈值的相邻顶点合并为一齿,
-        //         簇数=齿数. 阈值自适应: 用角度差的中位数*因子.
+        // pulley注意: 上下有凸缘(flange), 比齿顶高. 必须先过滤掉凸缘顶点:
+        //   只保留轴向位置接近几何中心的顶点(齿尖在中间, 凸缘在两端).
         var tipR = globalMaxR;
+
+        // 计算几何中心在轴上的位置(已有 centerOnAxis), 及轴向高度范围
+        // 轴向高度 = bbox 在轴方向的投影长度
+        var bboxDiag = bbox.maxCorner - bbox.minCorner;
+        var bboxHeight = abs(dot(bboxDiag, axisDir));
+        // 齿尖区: 轴向位置在中心附近 ±25% 高度内(排除两端凸缘)
+        var axialCenter = dot(centerOnAxis - axisOrigin, axisDir);
+        var axialHalfRange = bboxHeight * 0.25;
 
         var allVertices = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.VERTEX));
         var vertexMaxR = 0 * meter;
@@ -167,17 +174,20 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             {
                 var pt = evVertexPoint(context, { "vertex" : v });
                 var r = radialDistance(pt, axisOrigin, axisDir);
-                vertexPoints = append(vertexPoints, { "point" : pt, "radius" : r });
-                if (r > vertexMaxR) vertexMaxR = r;
+                var axialPos = dot(pt - axisOrigin, axisDir);
+                vertexPoints = append(vertexPoints, { "point" : pt, "radius" : r, "axialPos" : axialPos });
+                // 只用齿尖区(中间)的顶点找maxR, 排除凸缘
+                if (abs(axialPos - axialCenter) < axialHalfRange && r > vertexMaxR)
+                    vertexMaxR = r;
             }
         }
 
-        // 齿尖顶点: radius > 98% vertexMaxR (红点同样标准)
+        // 齿尖顶点: 在齿尖区(中间) 且 radius > 98% vertexMaxR
         var tipVertexCount = 0;
         var tipAngles = []; // 角度(度)
         for (var vp in vertexPoints)
         {
-            if (vp.radius > vertexMaxR * 0.98)
+            if (abs(vp.axialPos - axialCenter) < axialHalfRange && vp.radius > vertexMaxR * 0.98)
             {
                 debug(context, vp.point, DebugColor.RED);
                 tipVertexCount += 1;
