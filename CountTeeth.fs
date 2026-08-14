@@ -177,87 +177,82 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         if (size(sampleData) < 4)
             throw "No tooth-area samples after filtering. GlobalMaxR: " ~ toString(globalMaxR);
 
-        // ---------- 5. 按角度排序, 提取半径序列 ------------------------------
-        sampleData = sort(sampleData, function(a, b)
-        {
-            return a.angle - b.angle;
-        });
-
-        var samples = [];
-        for (var sd in sampleData)
-            samples = append(samples, sd.radius);
-
-        var rMax = 0 * meter;
-        var rMin = 1e10 * meter;
-        for (var s in samples)
-        {
-            if (s > rMax) rMax = s;
-            if (s < rMin) rMin = s;
-        }
-
-        var toothHeight = rMax - rMin;
-        var tipThreshold = rMin + toothHeight * 0.7;
-        var teeth = (toothHeight / rMax < 0.005) ? 0 : countPeaksAbove(samples, tipThreshold);
-
-        // ---------- 5b. 顶点计数(交叉验证) ----------------------------------
-        // 每个齿尖通常有顶点, 数半径接近maxR的顶点
+        // ---------- 5. 顶点角度聚类数齿 ----------------------------------
+        // 不用边采样的峰值计数(噪声太大, 且只覆盖半圈)
+        // 改用顶点聚类: 找齿尖顶点, 按角度聚类, 簇数=齿数
         var allVertices = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.VERTEX));
-        var vertexTeeth = 0;
+
+        // 收集所有顶点的(角度, 半径)
+        var vertexData = [];
         var vertexMaxR = 0 * meter;
-        var vertexRadii = [];
         for (var v in allVertices)
         {
             try silent
             {
                 var pt = evVertexPoint(context, { "vertex" : v });
                 var r = radialDistance(pt, axisOrigin, axisDir);
-                vertexRadii = append(vertexRadii, r);
+                var d = pt - axisOrigin;
+                var proj = d - dot(d, axisDir) * axisDir;
+                var angle = atan2(dot(proj, refV), dot(proj, refU));
+                if (angle < 0)
+                    angle += 2 * PI;
+                vertexData = append(vertexData, { "angle" : angle, "radius" : r, "point" : pt });
                 if (r > vertexMaxR) vertexMaxR = r;
             }
         }
-        for (var r in vertexRadii)
+
+        // 过滤: 只保留半径 > 90% maxR 的顶点(齿尖顶点)
+        var tipVertices = [];
+        for (var vd in vertexData)
         {
-            if (r > vertexMaxR * 0.95)
-                vertexTeeth += 1;
+            if (vd.radius > vertexMaxR * 0.90)
+                tipVertices = append(tipVertices, vd);
         }
 
-        // 红色标出齿顶采样点
-        if (teeth > 0)
+        // 按角度排序
+        tipVertices = sort(tipVertices, function(a, b)
         {
-            for (var sd in sampleData)
+            return a.angle - b.angle;
+        });
+
+        // 聚类: 相邻角度差 > 5° = 新簇
+        var teeth = 0;
+        if (size(tipVertices) > 0)
+        {
+            teeth = 1;
+            var clusterThreshold = 5 * PI / 180; // 5度(弧度)
+            for (var i = 1; i < size(tipVertices); i += 1)
             {
-                if (sd.radius >= tipThreshold)
-                {
-                    try silent
-                    {
-                        var pt = centerOnAxis
-                            + refU * (cos(sd.angle) * sd.radius)
-                            + refV * (sin(sd.angle) * sd.radius);
-                        debug(context, pt, DebugColor.RED);
-                    }
-                }
+                var gap = tipVertices[i].angle - tipVertices[i - 1].angle;
+                if (gap > clusterThreshold)
+                    teeth += 1;
             }
+            // 检查首尾是否跨越0°(环形)
+            var wrapGap = (2 * PI - tipVertices[size(tipVertices) - 1].angle) + tipVertices[0].angle;
+            if (wrapGap > clusterThreshold)
+                teeth += 1;
+            else
+                teeth -= 1; // 首尾属同一簇, 修正多算的
         }
+
+        // 红色标出齿尖顶点
+        for (var vd in tipVertices)
+        {
+            debug(context, vd.point, DebugColor.RED);
+        }
+
+        // 用边采样的rMax/rMin作参考
+        var rMax = globalMaxR;
+        var rMin = 0 * meter;
+        var toothHeight = 0 * meter;
 
         // ---------- 6. 输出 -------------------------------------------------
-        var angleMin = sampleData[0].angle;
-        var angleMax = sampleData[0].angle;
-        for (var sd in sampleData)
-        {
-            if (sd.angle < angleMin) angleMin = sd.angle;
-            if (sd.angle > angleMax) angleMax = sd.angle;
-        }
-        var angleRangeDeg = (angleMax - angleMin) * 180 / PI;
-
         var diagMsg = "Teeth: " ~ toString(teeth)
-            ~ " | VertexTeeth: " ~ toString(vertexTeeth)
-            ~ " | Tip R: " ~ toString(rMax)
-            ~ " | Root R: " ~ toString(rMin)
-            ~ " | Height: " ~ toString(toothHeight)
-            ~ " | Samples: " ~ toString(size(sampleData)) ~ "/" ~ toString(size(allSampleData))
-            ~ " | Angle: " ~ toString(angleMin * 180 / PI) ~ "-" ~ toString(angleMax * 180 / PI) ~ " (" ~ toString(angleRangeDeg) ~ "deg)"
-            ~ " | Vertices: " ~ toString(size(vertexRadii))
-            ~ " | VMaxR: " ~ toString(vertexMaxR);
+            ~ " | Tip vertices: " ~ toString(size(tipVertices))
+            ~ " | Total vertices: " ~ toString(size(vertexData))
+            ~ " | VMaxR: " ~ toString(vertexMaxR)
+            ~ " | GlobalMaxR: " ~ toString(globalMaxR)
+            ~ " | Edges: " ~ toString(size(allEdges));
 
         reportFeatureInfo(context, id, diagMsg);
         println(diagMsg);
