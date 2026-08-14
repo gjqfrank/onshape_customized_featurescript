@@ -218,39 +218,21 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             }
         }
 
-        // 轻度闭运算(膨胀→腐蚀, 窗口±1°=3°): 填补齿顶的1°窄凹陷, 不影响齿形
-        var SMW = 1;
-        var dilated = [];
-        for (var i = 0; i < NBUCKET; i += 1)
-        {
-            var mx = profile[i];
-            for (var j = -SMW; j <= SMW; j += 1)
-            {
-                var k = (i + j + NBUCKET) % NBUCKET;
-                if (profile[k] > mx) mx = profile[k];
-            }
-            dilated = append(dilated, mx);
-        }
-        for (var i = 0; i < NBUCKET; i += 1)
-        {
-            var mn = dilated[i];
-            for (var j = -SMW; j <= SMW; j += 1)
-            {
-                var k = (i + j + NBUCKET) % NBUCKET;
-                if (dilated[k] < mn) mn = dilated[k];
-            }
-            profile[i] = mn;
-        }
-
         // 布尔剖面: bin 高 = profile[bin] > thresh
         var high = [];
+        var highBinCount = 0;
         for (var i = 0; i < NBUCKET; i += 1)
-            high = append(high, profile[i] > thresh);
+        {
+            var h = profile[i] > thresh;
+            high = append(high, h);
+            if (h) highBinCount += 1;
+        }
 
-        // 数连续高区, 跨过窄低缝(<MINGAP°)合并
-        var MINGAP = 3;
+        // 数连续高区(不合并, 看真实剖面), 收集所有gap长度
+        // 注意: 起始点在一个gap中, 遍历一圈后回到起点, 最后的wrap gap和第一个gap是同一个
+        // 所以不添加wrap gap, allGaps条数 = 高区数 = 齿数(完整一圈)
         var teeth = 0;
-        var rawHighRegions = 0;
+        var allGaps = [];
         {
             // 找第一个低桶作为起点
             var startBin = 0;
@@ -274,13 +256,11 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                     {
                         if (!inHigh)
                         {
-                            // 检查上一个gap是否够长(够长则开新区, 否则延续)
-                            if (gapLen >= MINGAP || rawHighRegions == 0)
-                            {
-                                rawHighRegions += 1;
-                            }
-                            inHigh = true;
+                            teeth += 1;
+                            if (gapLen > 0)
+                                allGaps = append(allGaps, gapLen);
                         }
+                        inHigh = true;
                         gapLen = 0;
                     }
                     else
@@ -290,15 +270,28 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                         gapLen += 1;
                     }
                 }
-                // 收尾: 检查首尾相接处的gap
-                // rawHighRegions 已统计, 但如果最后一段gap < MINGAP, 首尾高区应合并
-                teeth = rawHighRegions;
-                if (gapLen < MINGAP && gapLen > 0 && rawHighRegions > 1)
-                    teeth -= 1;
+                // 不添加wrap gap: 它和第一个gap是同一个, 已计入allGaps[0]
             }
         }
         if (teeth < 1)
             teeth = 1;
+
+        var rawHighRegions = teeth;
+        // gap统计: 区分大gap(真齿间)和小gap(噪声), 用于诊断
+        var bigGaps = 0;
+        var smallGaps = 0;
+        var minGap = 999;
+        var maxGap = 0;
+        for (var g in allGaps)
+        {
+            if (g > 5) bigGaps += 1;
+            else smallGaps += 1;
+            if (g < minGap) minGap = g;
+            if (g > maxGap) maxGap = g;
+        }
+        // 如果有小gap(噪声), 用大gap数作为齿数
+        if (smallGaps > 0 && bigGaps > 0)
+            teeth = bigGaps;
 
         var rootR = dedendumR;
         // ---------- 5b. 红点标出齿尖顶点(仅可视化, 不参与计数) -------------
@@ -328,11 +321,14 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         // ---------- 6. 输出 -------------------------------------------------
         var diagMsg = "Teeth: " ~ toString(teeth)
             ~ " | RawRegions: " ~ toString(rawHighRegions)
+            ~ " | BigGaps: " ~ toString(bigGaps)
+            ~ " | SmallGaps: " ~ toString(smallGaps)
+            ~ " | HighBins: " ~ toString(highBinCount)
+            ~ " | MinGap: " ~ toString(minGap)
+            ~ " | MaxGap: " ~ toString(maxGap)
             ~ " | Tip R: " ~ toString(tipR)
             ~ " | Dedendum R: " ~ toString(dedendumR)
             ~ " | Thresh: " ~ toString(thresh)
-            ~ " | Outer samples: " ~ toString(size(outerSamples))
-            ~ " | Tip vertices: " ~ toString(tipVertexCount)
             ~ " | Edges: " ~ toString(size(allEdges));
 
         reportFeatureInfo(context, id, diagMsg);
