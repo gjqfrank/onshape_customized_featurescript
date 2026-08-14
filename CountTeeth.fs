@@ -206,16 +206,14 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
         var tipCircleR = minVR + rRange * (bestBin + 0.5) / NBINS;
 
-        // 齿尖顶点: radius在tipCircleR附近(±5%全局maxR, 容纳齿顶圆角多点)
-        var tipTol = globalMaxVR * 0.05;
+        // 齿尖顶点: radius在tipCircleR附近(±2%全局maxR, 收紧容差排除字样顶点)
+        var tipTol = globalMaxVR * 0.02;
         var tipVertexCount = 0;
         var tipAngles = []; // 角度(度)
         for (var vp in vertexPoints)
         {
             if (abs(vp.radius - tipCircleR) < tipTol)
             {
-                debug(context, vp.point, DebugColor.RED);
-                tipVertexCount += 1;
                 var d = vp.point - axisOrigin;
                 var proj = d - dot(d, axisDir) * axisDir;
                 var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
@@ -225,8 +223,8 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             }
         }
 
-        if (tipVertexCount < 3)
-            throw "Too few tip vertices (" ~ toString(tipVertexCount) ~ ") for clustering. tipCircleR: " ~ toString(tipCircleR);
+        if (size(tipAngles) < 3)
+            throw "Too few tip vertices (" ~ toString(size(tipAngles)) ~ ") for clustering. tipCircleR: " ~ toString(tipCircleR);
 
         // 按角度排序
         tipAngles = sort(tipAngles, function(a, b) { return a - b; });
@@ -238,6 +236,61 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         // wrap gap: 从最后一个到第一个(跨360)
         var wrapGap = (360 - tipAngles[size(tipAngles) - 1]) + tipAngles[0];
         gaps = append(gaps, wrapGap);
+
+        // 过滤孤立顶点(字样/噪点): 计算每个顶点到最近邻居的角度距离,
+        // 如果某顶点的最近邻居距离 > 平均距离的3倍, 认为是孤立点, 移除.
+        // 真齿尖顶点有邻居(同齿其他顶点或相邻齿), 字样顶点孤立.
+        var nnDists = [];
+        for (var i = 0; i < size(gaps); i += 1)
+        {
+            var prevGap = gaps[(i - 1 + size(gaps)) % size(gaps)];
+            var nextGap = gaps[i];
+            var nnDist = min(prevGap, nextGap);
+            nnDists = append(nnDists, nnDist);
+        }
+        var nnSum = 0;
+        for (var d in nnDists) nnSum += d;
+        var nnAvg = nnSum / size(nnDists);
+        var nnThresh = nnAvg * 3;
+        var filteredAngles = [];
+        for (var i = 0; i < size(tipAngles); i += 1)
+        {
+            if (nnDists[i] <= nnThresh)
+                filteredAngles = append(filteredAngles, tipAngles[i]);
+        }
+        tipAngles = filteredAngles;
+        tipVertexCount = size(tipAngles);
+
+        // 重新计算gaps(过滤后)
+        gaps = [];
+        for (var i = 1; i < size(tipAngles); i += 1)
+            gaps = append(gaps, tipAngles[i] - tipAngles[i - 1]);
+        wrapGap = (360 - tipAngles[size(tipAngles) - 1]) + tipAngles[0];
+        gaps = append(gaps, wrapGap);
+
+        if (tipVertexCount < 3)
+            throw "Too few tip vertices after isolation filter (" ~ toString(tipVertexCount) ~ ").";
+
+        // 红点标出过滤后的齿尖顶点
+        for (var vp in vertexPoints)
+        {
+            if (abs(vp.radius - tipCircleR) < tipTol)
+            {
+                var d = vp.point - axisOrigin;
+                var proj = d - dot(d, axisDir) * axisDir;
+                var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
+                if (angle < 0)
+                    angle += 360;
+                // 检查该角度是否在过滤后的列表中
+                var found = false;
+                for (var a in tipAngles)
+                {
+                    if (abs(a - angle) < 0.5) { found = true; break; }
+                }
+                if (found)
+                    debug(context, vp.point, DebugColor.RED);
+            }
+        }
 
         // 双峰gap分离(Otsu式): 找一个阈值把gaps分成"小gap(同齿内)"和"大gap(齿间)"两类
         // 使类内方差最小(等价于类间方差最大).
