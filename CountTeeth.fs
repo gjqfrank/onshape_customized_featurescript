@@ -187,11 +187,11 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             }
         }
 
-        // 过滤: 只保留半径 > 90% maxR 的顶点(齿尖顶点)
+        // 过滤: 只保留半径 > 98% maxR 的顶点(真齿尖顶点, 排除fillet/齿根)
         var tipVertices = [];
         for (var vd in vertexData)
         {
-            if (vd.radius > vertexMaxR * 0.90)
+            if (vd.radius > vertexMaxR * 0.98)
                 tipVertices = append(tipVertices, vd);
         }
 
@@ -201,24 +201,26 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             return a.angle - b.angle;
         });
 
-        // 聚类: 相邻角度差 > 5度 = 新簇(角度已转为纯数字度数)
+        // 聚类: 簇数 = gap > 阈值的次数(环形, 含首尾wrap)
+        // 修正: 旧逻辑在密集覆盖时首尾被错误减1导致teeth=0
         var teeth = 0;
         if (size(tipVertices) > 0)
         {
-            teeth = 1;
             var clusterThreshold = 5; // 5度
+            // 数所有内部gap > 阈值的次数
             for (var i = 1; i < size(tipVertices); i += 1)
             {
                 var gap = tipVertices[i].angle - tipVertices[i - 1].angle;
                 if (gap > clusterThreshold)
                     teeth += 1;
             }
-            // 检查首尾是否跨越0°(环形)
+            // 检查首尾wrap gap
             var wrapGap = (360 - tipVertices[size(tipVertices) - 1].angle) + tipVertices[0].angle;
             if (wrapGap > clusterThreshold)
                 teeth += 1;
-            else
-                teeth -= 1; // 首尾属同一簇, 修正多算的
+            // 如果没有任何gap(所有点在一个簇里), teeth=0, 修正为1
+            if (teeth == 0)
+                teeth = 1;
         }
 
         // 红色标出齿尖顶点
