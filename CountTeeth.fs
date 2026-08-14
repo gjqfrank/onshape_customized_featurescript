@@ -29,22 +29,7 @@ function pointToAxisDistance(point is Vector, axisOrigin is Vector, axisDir is V
     return norm(cross(d, axisDir));
 }
 
-// 在周期性序列中统计越过阈值的上升沿数量(=齿数)
-function countPeaksAbove(samples is array, threshold is ValueWithUnits) returns number
-{
-    var n = size(samples);
-    if (n == 0)
-        return 0;
-    var count = 0;
-    for (var i = 0; i < n; i += 1)
-    {
-        var prev = samples[(i - 1 + n) % n];
-        var cur = samples[i];
-        if (prev < threshold && cur >= threshold)
-            count += 1;
-    }
-    return count;
-}
+// (旧版峰值计数函数已移除, 改用顶点角度聚类)
 
 annotation { "Feature Type Name" : "Count Teeth", "Feature Type Description" : "Count teeth of a pulley or sprocket" }
 export const countTeeth = defineFeature(function(context is Context, id is Id, definition is map)
@@ -241,10 +226,8 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             debug(context, vd.point, DebugColor.RED);
         }
 
-        // 用边采样的rMax/rMin作参考
-        var rMax = globalMaxR;
-        var rMin = 0 * meter;
-        var toothHeight = 0 * meter;
+        // 边采样仅用于找全局maxR(辅助), 齿数由顶点聚类决定
+        var _ = globalMaxR; // 避免unused警告
 
         // ---------- 6. 输出 -------------------------------------------------
         var diagMsg = "Teeth: " ~ toString(teeth)
