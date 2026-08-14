@@ -123,7 +123,8 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         debug(context, centerOnAxis, DebugColor.YELLOW);
 
         // ---------- 4. 全局径向采样 -----------------------------------------
-        // 遍历所有边, 按角度分360桶, 每桶取最大半径 = 最外围轮廓
+        // 遍历所有边, 收集 (角度, 半径) 对到普通数组
+        // (append 在FS中可靠工作, 不用box/bucket避免数组原地修改问题)
         var allEdges = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.EDGE));
 
         if (size(allEdges) == 0)
@@ -136,85 +137,89 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             refU = normalize(cross(axisDir, vector(0, 1, 0)));
         var refV = cross(axisDir, refU);
 
-        // 用一个box包整个数组来累积半径 —— FeatureScript中数组本身是值类型,
-        // 必须通过box间接修改才能在循环里持久化
-        var NUM_BUCKETS = 360;
-        var bucketsBox = new box([]);
-        for (var b = 0; b < NUM_BUCKETS; b += 1)
-            bucketsBox[] = append(bucketsBox[], 0 * meter);
+        // 每边采样数: 总采样约720点(2点/度, 足够数齿)
+        var samplesPerEdge = floor(720 / size(allEdges));
+        if (samplesPerEdge < 2)
+            samplesPerEdge = 2;
 
-        // 每边采样数: 总采样约2000点, 最少4点
-        var samplesPerEdge = floor(2000 / size(allEdges));
-        if (samplesPerEdge < 4)
-            samplesPerEdge = 4;
-
+        // 收集所有采样点: {angle, radius}
+        var sampleData = [];
         var sampleCount = 0;
         for (var edge in allEdges)
         {
             for (var i = 0; i < samplesPerEdge; i += 1)
             {
+                var t = (i + 0.5) / samplesPerEdge;
                 try silent
                 {
-                    var t = (i + 0.5) / samplesPerEdge;
-                    var pt = evEdgeTangentLine(context, { "edge" : edge, "parameter" : t }).origin;
+                    var tl = evEdgeTangentLine(context, { "edge" : edge, "parameter" : t });
+                    var pt = tl.origin;
                     var r = radialDistance(pt, axisOrigin, axisDir);
                     var d = pt - axisOrigin;
                     var proj = d - dot(d, axisDir) * axisDir;
                     var angle = atan2(dot(proj, refV), dot(proj, refU));
                     if (angle < 0)
                         angle += 2 * PI;
-                    var bucketIdx = floor(angle / (2 * PI) * NUM_BUCKETS);
-                    if (bucketIdx >= NUM_BUCKETS)
-                        bucketIdx = NUM_BUCKETS - 1;
-
-                    // 先取出整个数组到局部变量, 再分步操作
-                    // (避免 box[][index] 链式访问, 该写法在 FS 中语义不可靠)
-                    var curArr = bucketsBox[];
-                    if (r > curArr[bucketIdx])
-                    {
-                        curArr[bucketIdx] = r;
-                        bucketsBox[] = curArr;
-                    }
+                    sampleData = append(sampleData, { "angle" : angle, "radius" : r });
                     sampleCount += 1;
                 }
             }
         }
 
-        // ---------- 5. 数齿 -------------------------------------------------
-        var samples = bucketsBox[]; // 360个半径值, 按角度排列
-        var validCount = 0;
+        if (sampleCount < 4)
+            throw "Sampling failed. Samples: " ~ toString(sampleCount) ~ " / Edges: " ~ toString(size(allEdges));
+
+        // ---------- 5. 按角度排序, 提取半径序列 ------------------------------
+        // 选择排序(sampleCount <= 720, O(n^2)可接受)
+        for (var i = 0; i < size(sampleData) - 1; i += 1)
+        {
+            var minIdx = i;
+            for (var j = i + 1; j < size(sampleData); j += 1)
+            {
+                if (sampleData[j].angle < sampleData[minIdx].angle)
+                    minIdx = j;
+            }
+            if (minIdx != i)
+            {
+                var tmp = sampleData[i];
+                sampleData[i] = sampleData[minIdx];
+                sampleData[minIdx] = tmp;
+            }
+        }
+
+        var samples = [];
+        for (var sd in sampleData)
+            samples = append(samples, sd.radius);
 
         var rMax = 0 * meter;
         var rMin = 1e10 * meter;
         for (var s in samples)
         {
-            if (s > 0 * meter)
-            {
-                validCount += 1;
-                if (s > rMax) rMax = s;
-                if (s < rMin) rMin = s;
-            }
+            if (s > rMax) rMax = s;
+            if (s < rMin) rMin = s;
         }
 
         if (rMax <= 0 * meter)
-            throw "Sampling failed. Samples: " ~ toString(sampleCount) ~ " / Valid buckets: " ~ toString(validCount) ~ " / Edges: " ~ toString(size(allEdges));
+            throw "All sample radii are zero. Samples: " ~ toString(sampleCount);
 
         var toothHeight = rMax - rMin;
         var tipThreshold = rMin + toothHeight * 0.7;
         var teeth = (toothHeight / rMax < 0.005) ? 0 : countPeaksAbove(samples, tipThreshold);
 
-        // 红色标出齿顶方向(在中剖面上画点)
+        // 红色标出齿顶采样点
         if (teeth > 0)
         {
-            for (var b = 0; b < NUM_BUCKETS; b += 1)
+            for (var sd in sampleData)
             {
-                if (samples[b] >= tipThreshold)
+                if (sd.radius >= tipThreshold)
                 {
-                    var angle = (b + 0.5) / NUM_BUCKETS * 2 * PI;
-                    var pt = centerOnAxis
-                        + refU * (cos(angle) * samples[b])
-                        + refV * (sin(angle) * samples[b]);
-                    debug(context, pt, DebugColor.RED);
+                    try silent
+                    {
+                        var pt = centerOnAxis
+                            + refU * (cos(sd.angle) * sd.radius)
+                            + refV * (sin(sd.angle) * sd.radius);
+                        debug(context, pt, DebugColor.RED);
+                    }
                 }
             }
         }
