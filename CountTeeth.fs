@@ -158,7 +158,6 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                     var t = (i + 0.5) / samplesPerEdge;
                     var pt = evEdgeTangentLine(context, { "edge" : edge, "parameter" : t }).origin;
                     var r = radialDistance(pt, axisOrigin, axisDir);
-                    sampleCount += 1;
                     var d = pt - axisOrigin;
                     var proj = d - dot(d, axisDir) * axisDir;
                     var angle = atan2(dot(proj, refV), dot(proj, refU));
@@ -167,18 +166,23 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                     var bucketIdx = floor(angle / (2 * PI) * NUM_BUCKETS);
                     if (bucketIdx >= NUM_BUCKETS)
                         bucketIdx = NUM_BUCKETS - 1;
-                    if (r > bucketsBox[][bucketIdx])
+
+                    // 先取出整个数组到局部变量, 再分步操作
+                    // (避免 box[][index] 链式访问, 该写法在 FS 中语义不可靠)
+                    var curArr = bucketsBox[];
+                    if (r > curArr[bucketIdx])
                     {
-                        var arr = bucketsBox[];
-                        arr[bucketIdx] = r;
-                        bucketsBox[] = arr;
+                        curArr[bucketIdx] = r;
+                        bucketsBox[] = curArr;
                     }
+                    sampleCount += 1;
                 }
             }
         }
 
         // ---------- 5. 数齿 -------------------------------------------------
         var samples = bucketsBox[]; // 360个半径值, 按角度排列
+        var validCount = 0;
 
         var rMax = 0 * meter;
         var rMin = 1e10 * meter;
@@ -186,13 +190,14 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         {
             if (s > 0 * meter)
             {
+                validCount += 1;
                 if (s > rMax) rMax = s;
                 if (s < rMin) rMin = s;
             }
         }
 
         if (rMax <= 0 * meter)
-            throw "Sampling failed, no valid radius. Samples: " ~ toString(sampleCount) ~ " / Edges: " ~ toString(size(allEdges));
+            throw "Sampling failed. Samples: " ~ toString(sampleCount) ~ " / Valid buckets: " ~ toString(validCount) ~ " / Edges: " ~ toString(size(allEdges));
 
         var toothHeight = rMax - rMin;
         var tipThreshold = rMin + toothHeight * 0.7;
