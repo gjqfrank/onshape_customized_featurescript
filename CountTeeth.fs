@@ -29,7 +29,7 @@ function pointToAxisDistance(point is Vector, axisOrigin is Vector, axisDir is V
     return norm(cross(d, axisDir));
 }
 
-// (旧版峰值计数函数已移除, 改用顶点角度聚类)
+// (齿数由径向剖面的滞回阈值上升沿计数决定; 顶点仅用于红点可视化)
 
 annotation { "Feature Type Name" : "Count Teeth", "Feature Type Description" : "Count teeth of a pulley or sprocket" }
 export const countTeeth = defineFeature(function(context is Context, id is Id, definition is map)
@@ -151,99 +151,136 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         if (size(allSampleData) < 4)
             throw "Sampling failed. Samples: " ~ toString(size(allSampleData)) ~ " / Edges: " ~ toString(size(allEdges));
 
-        // 第二遍: 过滤非齿廓采样点(只保留半径 > 50% maxR, 排除减重孔/内孔)
-        var sampleData = [];
+        // ---------- 5. 径向剖面 + 滞回阈值计数(主方法) ---------------------
+        // 对平顶齿(gear)和尖顶齿(sprocket/pulley)都鲁棒:
+        //   - 按1°分360桶, 每桶取最大半径 → "角度-半径"剖面
+        //     (外缘齿廓是闭合环覆盖整圈; 取max可自然压掉减重孔/内孔, 因为齿顶半径永远最大)
+        //   - tipR=剖面最大值(齿顶), rootR=剖面最小值(齿根)
+        //   - 滞回: 上沿阈值=tipR-30%幅值, 下沿阈值=rootR+30%幅值
+        //     每齿: 升过上沿(计数1) → 降过下沿(复位). 平顶齿整段高于上沿只算1次, 不会算成2齿
+        var NBUCKET = 360;
+        var profile = [];
+        var hasSample = [];
+        for (var i = 0; i < NBUCKET; i += 1)
+        {
+            profile = append(profile, 0 * meter);
+            hasSample = append(hasSample, false);
+        }
         for (var sd in allSampleData)
         {
-            if (sd.radius > globalMaxR * 0.5)
-                sampleData = append(sampleData, sd);
+            var angleDeg = sd.angle / degree;
+            if (angleDeg < 0)
+                angleDeg += 360;
+            var bin = floor(angleDeg / 360 * NBUCKET);
+            if (bin >= NBUCKET)
+                bin = NBUCKET - 1;
+            if (bin < 0)
+                bin = 0;
+            if (sd.radius > profile[bin])
+            {
+                profile[bin] = sd.radius;
+                hasSample[bin] = true;
+            }
         }
 
-        if (size(sampleData) < 4)
-            throw "No tooth-area samples after filtering. GlobalMaxR: " ~ toString(globalMaxR);
+        // 填补空桶(圆周上线性插值相邻已填桶), 保证剖面连续
+        for (var i = 0; i < NBUCKET; i += 1)
+        {
+            if (!hasSample[i])
+            {
+                var prev = -1;
+                var next = -1;
+                for (var j = 1; j <= NBUCKET; j += 1)
+                {
+                    var pi = (i - j + NBUCKET) % NBUCKET;
+                    if (hasSample[pi]) { prev = pi; break; }
+                }
+                for (var j = 1; j <= NBUCKET; j += 1)
+                {
+                    var ni = (i + j) % NBUCKET;
+                    if (hasSample[ni]) { next = ni; break; }
+                }
+                if (prev >= 0 && next >= 0)
+                {
+                    var span = (next - prev + NBUCKET) % NBUCKET;
+                    var dp = (i - prev + NBUCKET) % NBUCKET;
+                    if (span == 0)
+                        profile[i] = profile[prev];
+                    else
+                        profile[i] = profile[prev] + (profile[next] - profile[prev]) * (dp / span);
+                }
+                else if (prev >= 0)
+                    profile[i] = profile[prev];
+            }
+        }
 
-        // ---------- 5. 顶点角度聚类数齿 ----------------------------------
-        // 不用边采样的峰值计数(噪声太大, 且只覆盖半圈)
-        // 改用顶点聚类: 找齿尖顶点, 按角度聚类, 簇数=齿数
+        var tipR = 0 * meter;
+        var rootR = profile[0];
+        for (var i = 0; i < NBUCKET; i += 1)
+        {
+            if (profile[i] > tipR) tipR = profile[i];
+            if (profile[i] < rootR) rootR = profile[i];
+        }
+
+        var teeth = 0;
+        var amplitude = tipR - rootR;
+        if (amplitude > tipR * 0.005)
+        {
+            var upThresh = tipR - amplitude * 0.3;
+            var downThresh = rootR + amplitude * 0.3;
+            // 从一个低于下沿的桶(齿根)开始, 避免起始状态歧义
+            var startBin = 0;
+            var foundStart = false;
+            for (var i = 0; i < NBUCKET; i += 1)
+            {
+                if (profile[i] < downThresh) { startBin = i; foundStart = true; break; }
+            }
+            if (foundStart)
+            {
+                var high = false;
+                for (var k = 0; k < NBUCKET; k += 1)
+                {
+                    var i = (startBin + k) % NBUCKET;
+                    if (!high && profile[i] > upThresh) { high = true; teeth += 1; }
+                    else if (high && profile[i] < downThresh) { high = false; }
+                }
+            }
+            else
+            {
+                teeth = 1;
+            }
+        }
+
+        // ---------- 5b. 红点标出齿尖顶点(仅可视化, 不参与计数) -------------
         var allVertices = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.VERTEX));
-
-        // 收集所有顶点的(角度, 半径)
-        var vertexData = [];
         var vertexMaxR = 0 * meter;
+        var vertexPoints = [];
         for (var v in allVertices)
         {
             try silent
             {
                 var pt = evVertexPoint(context, { "vertex" : v });
                 var r = radialDistance(pt, axisOrigin, axisDir);
-                var d = pt - axisOrigin;
-                var proj = d - dot(d, axisDir) * axisDir;
-                // atan2返回带单位的弧度, 除以radian得到纯数字, 再转度数便于比较
-                var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
-                if (angle < 0)
-                    angle += 360;
-                vertexData = append(vertexData, { "angle" : angle, "radius" : r, "point" : pt });
+                vertexPoints = append(vertexPoints, { "point" : pt, "radius" : r });
                 if (r > vertexMaxR) vertexMaxR = r;
             }
         }
-
-        // 过滤: 只保留半径 > 98% maxR 的顶点(真齿尖顶点, 排除fillet/齿根)
-        var tipVertices = [];
-        for (var vd in vertexData)
+        var tipVertexCount = 0;
+        for (var vp in vertexPoints)
         {
-            if (vd.radius > vertexMaxR * 0.98)
-                tipVertices = append(tipVertices, vd);
-        }
-
-        // 按角度排序
-        tipVertices = sort(tipVertices, function(a, b)
-        {
-            return a.angle - b.angle;
-        });
-
-        // 聚类: 自适应阈值 = 360/(预估齿数) * 0.5
-        // 预估: 稀疏角度覆盖(max-min角度范围) / 平均簇大小
-        // 简化: 用顶点角度的中位间距 * 4 作为阈值(同齿顶点间距 << 齿间距)
-        var teeth = 0;
-        if (size(tipVertices) >= 2)
-        {
-            // 计算相邻角度差的中位数(排除wrap)
-            var gaps = [];
-            for (var i = 1; i < size(tipVertices); i += 1)
-                gaps = append(gaps, tipVertices[i].angle - tipVertices[i - 1].angle);
-            gaps = sort(gaps, function(a, b) { return a - b; });
-            var medianGap = gaps[size(gaps) / 2];
-
-            // 阈值 = 中位间距 * 3 (同齿顶点间距小, 齿间间距大)
-            // 如果某gap > 3倍中位数, 认为是齿间分隔
-            var clusterThreshold = medianGap * 3;
-
-            // 数所有gap > 阈值的次数(含wrap)
-            for (var i = 1; i < size(tipVertices); i += 1)
+            if (vp.radius > vertexMaxR * 0.98)
             {
-                if (tipVertices[i].angle - tipVertices[i - 1].angle > clusterThreshold)
-                    teeth += 1;
+                debug(context, vp.point, DebugColor.RED);
+                tipVertexCount += 1;
             }
-            var wrapGap = (360 - tipVertices[size(tipVertices) - 1].angle) + tipVertices[0].angle;
-            if (wrapGap > clusterThreshold)
-                teeth += 1;
-            if (teeth == 0)
-                teeth = 1;
         }
-
-        // 红色标出齿尖顶点
-        for (var vd in tipVertices)
-        {
-            debug(context, vd.point, DebugColor.RED);
-        }
-
-        // 边采样仅用于找全局maxR(辅助), 齿数由顶点聚类决定
-        var _ = globalMaxR; // 避免unused警告
 
         // ---------- 6. 输出 -------------------------------------------------
         var diagMsg = "Teeth: " ~ toString(teeth)
-            ~ " | Tip vertices: " ~ toString(size(tipVertices))
-            ~ " | Total vertices: " ~ toString(size(vertexData))
+            ~ " | Tip R: " ~ toString(tipR)
+            ~ " | Root R: " ~ toString(rootR)
+            ~ " | Amplitude: " ~ toString(amplitude)
+            ~ " | Tip vertices: " ~ toString(tipVertexCount)
             ~ " | VMaxR: " ~ toString(vertexMaxR)
             ~ " | GlobalMaxR: " ~ toString(globalMaxR)
             ~ " | Edges: " ~ toString(size(allEdges));
