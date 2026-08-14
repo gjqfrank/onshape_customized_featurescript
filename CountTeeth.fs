@@ -151,56 +151,57 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         if (size(allSampleData) < 4)
             throw "Sampling failed. Samples: " ~ toString(size(allSampleData)) ~ " / Edges: " ~ toString(size(allEdges));
 
-        // ---------- 5. 角度直方图自相关(主方法) -----------------------------
-        // 边采样只覆盖半圈(齿顶平面边多, 渐开线齿侧边少), 剖面法失效.
-        // 改用所有外缘采样点(顶点+边采样)构建角度直方图(每角度桶的样本数),
-        // 然后做圆周自相关: 对候选齿数N, 把所有点角度平移360/N的倍数后,
-        // 计算与原始直方图的重合度. 真齿数N会使重合度最大(周期性最强).
-        // 这种方法不依赖完整剖面, 只要每齿都有采样点就能工作.
+        // ---------- 5. 齿尖顶点角度自相关(主方法) ---------------------------
+        // 红点(齿尖顶点)位置是准的, 直接用齿尖顶点的角度做周期性分析.
+        // 方法: 把齿尖顶点按角度放入360桶(每齿1簇, 簇内有1~4个顶点),
+        //       然后做圆周自相关: 对候选齿数N, 平移360/N后看重合度.
+        //       真齿数N时每簇对齐到下一簇, 重合度最大.
+        // 优点: 只用最外围顶点(齿尖), 不受齿侧/齿根/内孔干扰.
         var tipR = globalMaxR;
 
-        // 过滤内孔/轮毂: 只留 radius > 0.5*tipR 的样本
-        var outerSamples = [];
-        for (var sd in allSampleData)
-        {
-            if (sd.radius > tipR * 0.5)
-                outerSamples = append(outerSamples, sd);
-        }
-
-        // 也加入顶点(齿尖顶点角度精确)
         var allVertices = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.VERTEX));
         var vertexMaxR = 0 * meter;
+        var vertexPoints = [];
         for (var v in allVertices)
         {
             try silent
             {
                 var pt = evVertexPoint(context, { "vertex" : v });
                 var r = radialDistance(pt, axisOrigin, axisDir);
-                var d = pt - axisOrigin;
-                var proj = d - dot(d, axisDir) * axisDir;
-                var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
-                if (angle < 0)
-                    angle += 360;
-                if (r > tipR * 0.5)
-                    outerSamples = append(outerSamples, { "angle" : angle * degree, "radius" : r });
+                vertexPoints = append(vertexPoints, { "point" : pt, "radius" : r });
                 if (r > vertexMaxR) vertexMaxR = r;
             }
         }
 
-        if (size(outerSamples) < 4)
-            throw "No outer samples. tipR: " ~ toString(tipR);
+        // 齿尖顶点: radius > 98% vertexMaxR (红点同样标准)
+        var tipVertexCount = 0;
+        var tipAngles = []; // 角度(度), 用于自相关
+        for (var vp in vertexPoints)
+        {
+            if (vp.radius > vertexMaxR * 0.98)
+            {
+                debug(context, vp.point, DebugColor.RED);
+                tipVertexCount += 1;
+                var d = vp.point - axisOrigin;
+                var proj = d - dot(d, axisDir) * axisDir;
+                var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
+                if (angle < 0)
+                    angle += 360;
+                tipAngles = append(tipAngles, angle);
+            }
+        }
 
-        // 构建角度直方图(1°一桶, 360桶)
+        if (tipVertexCount < 3)
+            throw "Too few tip vertices (" ~ toString(tipVertexCount) ~ ") for autocorrelation.";
+
+        // 角度直方图(1°一桶), 齿尖顶点按角度入桶
         var NB = 360;
         var angHisto = [];
         for (var i = 0; i < NB; i += 1)
             angHisto = append(angHisto, 0);
-        for (var sd in outerSamples)
+        for (var a in tipAngles)
         {
-            var angleDeg = sd.angle / degree;
-            if (angleDeg < 0)
-                angleDeg += 360;
-            var bin = floor(angleDeg / 360 * NB);
+            var bin = floor(a / 360 * NB);
             if (bin >= NB) bin = NB - 1;
             if (bin < 0) bin = 0;
             angHisto[bin] += 1;
@@ -210,14 +211,14 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         for (var i = 0; i < NB; i += 1)
             if (angHisto[i] > 0) coveredBins += 1;
 
-        // 自相关: 对候选齿数 N=4..60, 计算周期 360/N 的自相关分数
+        // 自相关: 对候选齿数 N=3..80, 计算周期 360/N 的自相关分数
         // 分数 = sum(histo[i] * histo[(i + shift) mod NB]) / (sum(histo[i]^2))
-        // shift = NB / N (一个齿距对应的桶数)
-        // 真齿数时, shift 把每齿的点对齐到下一齿, 重合度高 → 分数高
+        // shift = round(NB / N) (一个齿距对应的桶数)
+        // 真齿数时, shift 把每齿的簇对齐到下一齿的簇, 重合度高 → 分数高
         var bestTeeth = 1;
         var bestScore = 0.0;
-        var scores = []; // 诊断: [N]=score
-        for (var N = 4; N <= 60; N += 1)
+        var scores = [];
+        for (var N = 3; N <= 80; N += 1)
         {
             var shift = floor(NB / N + 0.5);
             if (shift < 1) shift = 1;
@@ -250,33 +251,13 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         var thresh = 0 * meter;
         var amplitude = 0 * meter;
         var rootR = 0 * meter;
-        // ---------- 5b. 红点标出齿尖顶点(仅可视化, 不参与计数) -------------
-        var vertexPoints = [];
-        for (var v in allVertices)
-        {
-            try silent
-            {
-                var pt = evVertexPoint(context, { "vertex" : v });
-                var r = radialDistance(pt, axisOrigin, axisDir);
-                vertexPoints = append(vertexPoints, { "point" : pt, "radius" : r });
-            }
-        }
-        var tipVertexCount = 0;
-        for (var vp in vertexPoints)
-        {
-            if (vp.radius > vertexMaxR * 0.98)
-            {
-                debug(context, vp.point, DebugColor.RED);
-                tipVertexCount += 1;
-            }
-        }
 
         // ---------- 6. 输出 -------------------------------------------------
         // 显示最佳分数附近几个候选齿数的分数, 便于判断
         var scoreStr = "";
         for (var i = 0; i < size(scores); i += 1)
         {
-            var N = i + 4;
+            var N = i + 3;
             if (N >= bestTeeth - 2 && N <= bestTeeth + 2)
                 scoreStr = scoreStr ~ toString(N) ~ ":" ~ toString(round(scores[i] * 1000) / 1000) ~ " ";
         }
@@ -284,7 +265,6 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             ~ " | BestScore: " ~ toString(round(bestScore * 1000) / 1000)
             ~ " | Scores: " ~ scoreStr
             ~ " | CoveredBins: " ~ toString(coveredBins)
-            ~ " | Outer samples: " ~ toString(size(outerSamples))
             ~ " | Tip vertices: " ~ toString(tipVertexCount)
             ~ " | Tip R: " ~ toString(tipR)
             ~ " | Edges: " ~ toString(size(allEdges));
