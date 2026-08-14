@@ -103,11 +103,8 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         var axisOrigin is Vector = bestAxis.origin;
         var axisDir is Vector = bestAxis.direction;
 
-        // ---------- 2. 几何中心 ---------------------------------------------
-        var bbox = evBox3(context, { "topology" : definition.part });
-        var bboxCenter = (bbox.minCorner + bbox.maxCorner) / 2;
-        // 投影到轴上
-        var centerOnAxis = axisOrigin + dot(bboxCenter - axisOrigin, axisDir) * axisDir;
+        // 几何中心: 用轴原点作为参考点(角度计算只需轴上任意点)
+        var centerOnAxis = axisOrigin;
 
         // ---------- 3. 标识轴和中心 -----------------------------------------
         // 黄色画轴(用线)和中心点
