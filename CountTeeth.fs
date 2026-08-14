@@ -61,41 +61,50 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
     }
     {
         // ---------- 1. 自动找回转轴 -----------------------------------------
-        // 找所有面, 尝试 evAxis 找圆柱面, 聚类同心轴, 选包含最多圆柱面的轴
+        // 找所有面, 尝试 evAxis 找圆柱面, 收集时去重(方向平行+原点共线视为同一个)
         var allFaces = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.FACE));
 
-        var axes = []; // 每个元素 { "origin", "direction" }
+        var axes = []; // 去重后的轴列表
+        var counts = []; // 每根轴出现的次数
+        var tol = 0.01 * meter; // 1cm 同心容差
+
         for (var face in allFaces)
         {
             try silent
             {
                 var ax = evAxis(context, { "axis" : face });
-                axes = append(axes, ax);
+                // 检查是否已有近似轴
+                var found = false;
+                for (var k = 0; k < size(axes); k += 1)
+                {
+                    if (abs(dot(axes[k].direction, ax.direction)) > 0.999 &&
+                        pointToAxisDistance(axes[k].origin, ax.origin, ax.direction) < tol)
+                    {
+                        counts[k] += 1;
+                        found = true;
+                        break;
+                    }
+                }
+                if (not found)
+                {
+                    axes = append(axes, ax);
+                    counts = append(counts, 1);
+                }
             }
         }
 
         if (size(axes) == 0)
-            throw "未找到圆柱面, 无法自动确定回转轴。";
+            throw "No cylindrical face found, cannot auto-detect rotation axis.";
 
-        // 聚类: 对每根轴统计有多少其他轴与它同心(方向平行+原点共线)
-        var bestCount = 0;
+        // 选出现次数最多的轴(回转轴上有最多同心圆柱面: 内孔、轮毂、齿根圆等)
+        var bestCount = counts[0];
         var bestAxis = axes[0];
-        var tol = 0.01 * meter; // 1cm 同心容差
-
-        for (var i = 0; i < size(axes); i += 1)
+        for (var k = 1; k < size(axes); k += 1)
         {
-            var count = 1;
-            for (var j = 0; j < size(axes); j += 1)
+            if (counts[k] > bestCount)
             {
-                if (i == j) continue;
-                if (abs(dot(axes[i].direction, axes[j].direction)) < 0.999) continue;
-                if (pointToAxisDistance(axes[i].origin, axes[j].origin, axes[j].direction) < tol)
-                    count += 1;
-            }
-            if (count > bestCount)
-            {
-                bestCount = count;
-                bestAxis = axes[i];
+                bestCount = counts[k];
+                bestAxis = axes[k];
             }
         }
 
@@ -118,7 +127,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         var allEdges = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.EDGE));
 
         if (size(allEdges) == 0)
-            throw "未找到边，无法采样。";
+            throw "No edges found, cannot sample.";
 
         var refU;
         if (abs(axisDir[0]) < 0.9)
@@ -127,12 +136,14 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             refU = normalize(cross(axisDir, vector(0, 1, 0)));
         var refV = cross(axisDir, refU);
 
+        // 360个独立box做buckets —— FeatureScript中box数组的元素赋值(buckets[][i]=x)不生效,
+        // 必须用独立box, 每个box单独读写
         var NUM_BUCKETS = 360;
-        var buckets = new box([]);
+        var buckets = [];
         for (var b = 0; b < NUM_BUCKETS; b += 1)
-            buckets[] = append(buckets[], 0 * meter);
+            buckets = append(buckets, new box(0 * meter));
 
-        // 每边采样数: 总采样约2000点, 最少4点(手动max, FeatureScript的max只支持ValueWithUnits)
+        // 每边采样数: 总采样约2000点, 最少4点
         var samplesPerEdge = floor(2000 / size(allEdges));
         if (samplesPerEdge < 4)
             samplesPerEdge = 4;
@@ -156,14 +167,17 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                     var bucketIdx = floor(angle / (2 * PI) * NUM_BUCKETS);
                     if (bucketIdx >= NUM_BUCKETS)
                         bucketIdx = NUM_BUCKETS - 1;
-                    if (r > buckets[][bucketIdx])
-                        buckets[][bucketIdx] = r;
+                    if (r > buckets[bucketIdx][])
+                        buckets[bucketIdx][] = r;
                 }
             }
         }
 
         // ---------- 5. 数齿 -------------------------------------------------
-        var samples = buckets[]; // 360个半径值, 按角度排列
+        // 从360个独立box收集半径值
+        var samples = [];
+        for (var b = 0; b < NUM_BUCKETS; b += 1)
+            samples = append(samples, buckets[b][]);
 
         var rMax = 0 * meter;
         var rMin = 1e10 * meter;
@@ -177,7 +191,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
 
         if (rMax <= 0 * meter)
-            throw "采样失败, 未获取到有效半径。成功采样点数: " ~ toString(sampleCount) ~ " / 边数: " ~ toString(size(allEdges));
+            throw "Sampling failed, no valid radius. Samples: " ~ toString(sampleCount) ~ " / Edges: " ~ toString(size(allEdges));
 
         var toothHeight = rMax - rMin;
         var tipThreshold = rMin + toothHeight * 0.7;
