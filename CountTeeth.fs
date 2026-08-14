@@ -137,10 +137,10 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             refU = normalize(cross(axisDir, vector(0, 1, 0)));
         var refV = cross(axisDir, refU);
 
-        // 每边采样数: 总采样约720点(2点/度, 足够数齿)
-        var samplesPerEdge = floor(720 / size(allEdges));
-        if (samplesPerEdge < 2)
-            samplesPerEdge = 2;
+        // 每边采样数: 总采样约1440点(4点/度, 足够数齿), 每边最少8点
+        var samplesPerEdge = floor(1440 / size(allEdges));
+        if (samplesPerEdge < 8)
+            samplesPerEdge = 8;
 
         // 收集所有采样点: {angle, radius}
         var sampleData = [];
@@ -214,10 +214,21 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
 
         // ---------- 6. 输出 -------------------------------------------------
+        // 统计角度覆盖情况(诊断用)
+        var angleMin = sampleData[0].angle;
+        var angleMax = sampleData[0].angle;
+        for (var sd in sampleData)
+        {
+            if (sd.angle < angleMin) angleMin = sd.angle;
+            if (sd.angle > angleMax) angleMax = sd.angle;
+        }
+
         var diagMsg = "Teeth: " ~ toString(teeth)
             ~ " | Tip R: " ~ toString(rMax)
             ~ " | Root R: " ~ toString(rMin)
             ~ " | Height: " ~ toString(toothHeight)
+            ~ " | Samples: " ~ toString(sampleCount)
+            ~ " | Angle range: " ~ toString(angleMin * 180 / PI) ~ " to " ~ toString(angleMax * 180 / PI)
             ~ " | Cyl axes: " ~ toString(size(axes))
             ~ " | Concentric: " ~ toString(bestCount)
             ~ " | Edges: " ~ toString(size(allEdges));
