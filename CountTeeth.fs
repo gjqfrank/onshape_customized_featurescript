@@ -85,7 +85,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                         break;
                     }
                 }
-                if (not found)
+                if (!found)
                 {
                     axes = append(axes, ax);
                     counts = append(counts, 1);
