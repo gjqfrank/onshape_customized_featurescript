@@ -154,9 +154,8 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         // ---------- 5. 齿尖顶点聚类数齿(主方法) -----------------------------
         // 红点(齿尖顶点)位置准, 但每齿可能有1~4个顶点(平顶齿两角+圆角).
         // pulley注意: 上下有凸缘(flange), 比齿顶高, 凸缘顶点半径更大.
-        //   策略: 不能直接取全局maxR(会被凸缘占据). 改用半径直方图找"齿顶圆"半径:
-        //   把顶点按半径分桶, 找顶点数最多的桶(齿尖顶点最多), 该桶半径=tipCircleR.
-        //   凸缘顶点数少(每圈凸缘只有少量顶点), 不会主导直方图.
+        //   策略: 用半径直方图找"齿顶圆"半径, 但选桶标准改为"角度覆盖最广的桶",
+        //   而非顶点数最多的桶(凸缘顶点可能数量多但角度少, 齿尖顶点角度覆盖全圈).
         var allVertices = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.VERTEX));
         var vertexPoints = [];
         for (var v in allVertices)
@@ -165,11 +164,13 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             {
                 var pt = evVertexPoint(context, { "vertex" : v });
                 var r = radialDistance(pt, axisOrigin, axisDir);
-                vertexPoints = append(vertexPoints, { "point" : pt, "radius" : r });
+                var d = pt - axisOrigin;
+                var axPos = dot(d, axisDir);
+                vertexPoints = append(vertexPoints, { "point" : pt, "radius" : r, "axial" : axPos });
             }
         }
 
-        // 找全局maxR(含凸缘)和minR, 用于直方图范围
+        // 找全局maxR(含凸缘)和minR
         var globalMaxVR = 0 * meter;
         var minVR = vertexPoints[0].radius;
         for (var vp in vertexPoints)
@@ -178,29 +179,50 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             if (vp.radius < minVR) minVR = vp.radius;
         }
 
-        // 半径直方图: 分50桶, 找顶点数最多的桶 = 齿顶圆半径
+        // 半径直方图: 分50桶, 对每个桶统计顶点覆盖了多少个不同的角度桶(36个角度桶, 每10度)
+        // 齿尖顶点覆盖全圈(角度覆盖~36), 凸缘顶点覆盖少(凸缘是连续环但顶点少)
         var NBINS = 50;
-        var rHisto = [];
-        for (var i = 0; i < NBINS; i += 1)
-            rHisto = append(rHisto, 0);
+        var NANGLE = 36;
         var rRange = globalMaxVR - minVR;
         if (rRange == 0 * meter) rRange = 1 * meter;
+        var bucketAngleCover = []; // 每个半径桶的角度覆盖数
+        var bucketAngleSet = []; // 每个半径桶的角度集合(用二维数组)
+        for (var i = 0; i < NBINS; i += 1)
+        {
+            bucketAngleCover = append(bucketAngleCover, 0);
+            var aSet = [];
+            for (var j = 0; j < NANGLE; j += 1) aSet = append(aSet, false);
+            bucketAngleSet = append(bucketAngleSet, aSet);
+        }
         for (var vp in vertexPoints)
         {
             var frac = (vp.radius - minVR) / rRange;
             if (frac < 0) frac = 0;
             if (frac > 0.999) frac = 0.999;
-            rHisto[floor(frac * NBINS)] += 1;
+            var bIdx = floor(frac * NBINS);
+            var binR = minVR + rRange * (bIdx + 0.5) / NBINS;
+            if (binR > globalMaxVR * 0.5)
+            {
+                var d = vp.point - axisOrigin;
+                var proj = d - dot(d, axisDir) * axisDir;
+                var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
+                if (angle < 0) angle += 360;
+                var aIdx = floor(angle / 360 * NANGLE) % NANGLE;
+                if (!bucketAngleSet[bIdx][aIdx])
+                {
+                    bucketAngleSet[bIdx][aIdx] = true;
+                    bucketAngleCover[bIdx] += 1;
+                }
+            }
         }
-        // 找最高桶(齿顶圆半径所在), 但只在半径>50%maxR的桶里找(排除内孔)
+        // 选角度覆盖最广的桶 = 齿顶圆半径(齿尖顶点覆盖全圈)
         var bestBin = 0;
-        var bestHistoCount = 0;
+        var bestCover = 0;
         for (var i = 0; i < NBINS; i += 1)
         {
-            var binR = minVR + rRange * (i + 0.5) / NBINS;
-            if (binR > globalMaxVR * 0.5 && rHisto[i] > bestHistoCount)
+            if (bucketAngleCover[i] > bestCover)
             {
-                bestHistoCount = rHisto[i];
+                bestCover = bucketAngleCover[i];
                 bestBin = i;
             }
         }
@@ -339,6 +361,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         var diagMsg = "Teeth: " ~ toString(teeth)
             ~ " | Tip vertices: " ~ toString(tipVertexCount)
             ~ " | TipCircleR: " ~ toString(tipCircleR)
+            ~ " | AngleCover: " ~ toString(bestCover) ~ "/" ~ toString(NANGLE)
             ~ " | GlobalMaxVR: " ~ toString(globalMaxVR)
             ~ " | BigGaps: " ~ toString(bigGaps)
             ~ " | SmallGaps: " ~ toString(smallGapCount)
