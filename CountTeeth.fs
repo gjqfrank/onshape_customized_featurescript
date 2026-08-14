@@ -204,15 +204,34 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         var wrapGap = (360 - tipAngles[size(tipAngles) - 1]) + tipAngles[0];
         gaps = append(gaps, wrapGap);
 
-        // 排序gaps, 找"大gap"(齿间)和"小gap"(同齿内)
-        // 真齿数时: 小gap(同齿顶点间距) << 大gap(齿间距)
-        // 用gaps的中位数估计: 大gap ≈ 360/齿数, 小gap << 大gap
+        // 双峰gap分离(Otsu式): 找一个阈值把gaps分成"小gap(同齿内)"和"大gap(齿间)"两类
+        // 使类内方差最小(等价于类间方差最大).
+        // 比中位数稳健: 中位数在顶点分布不均时会落在错误位置.
         var sortedGaps = sort(gaps, function(a, b) { return a - b; });
+        var minGap = sortedGaps[0];
+        var maxGap = sortedGaps[size(sortedGaps) - 1];
+        var clusterThresh = (minGap + maxGap) / 2;
+        var bestVar = -1;
+        for (var t = 0; t < size(sortedGaps) - 1; t += 1)
+        {
+            var thresh = (sortedGaps[t] + sortedGaps[t + 1]) / 2;
+            var n1 = t + 1;
+            var n2 = size(sortedGaps) - n1;
+            if (n1 == 0 || n2 == 0) continue;
+            var sum1 = 0;
+            for (var i = 0; i <= t; i += 1) sum1 += sortedGaps[i];
+            var mean1 = sum1 / n1;
+            var sum2 = 0;
+            for (var i = t + 1; i < size(sortedGaps); i += 1) sum2 += sortedGaps[i];
+            var mean2 = sum2 / n2;
+            var w = n1 * n2 * (mean1 - mean2) * (mean1 - mean2);
+            if (w > bestVar)
+            {
+                bestVar = w;
+                clusterThresh = thresh;
+            }
+        }
         var medianGap = sortedGaps[size(sortedGaps) / 2];
-
-        // 阈值: 介于小gap和大gap之间. 用中位数*2(如果中位数是小gap)或中位数*0.5(如果中位数是大gap)
-        // 更稳健: 阈值 = 中位数. 大gap>中位数, 小gap<中位数
-        var clusterThresh = medianGap;
 
         // 数gap > 阈值的次数 = 齿间分隔数 = 齿数
         var teeth = 0;
@@ -227,8 +246,6 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         // 诊断: gap统计
         var smallGapCount = 0;
         var bigGapCount = 0;
-        var minGap = 999;
-        var maxGap = 0;
         var bigGapSum = 0;
         for (var g in gaps)
         {
@@ -239,8 +256,6 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             }
             else
                 smallGapCount += 1;
-            if (g < minGap) minGap = g;
-            if (g > maxGap) maxGap = g;
         }
         var bigGapAvg = 0;
         if (bigGapCount > 0)
@@ -262,7 +277,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             ~ " | Tip vertices: " ~ toString(tipVertexCount)
             ~ " | BigGaps: " ~ toString(bigGaps)
             ~ " | SmallGaps: " ~ toString(smallGapCount)
-            ~ " | MedianGap: " ~ toString(round(medianGap * 10) / 10)
+            ~ " | Thresh: " ~ toString(round(thresh * 10) / 10)
             ~ " | BigGapAvg: " ~ toString(round(bigGapAvg * 10) / 10)
             ~ " | ExpectedGap: " ~ toString(round(expectedGap * 10) / 10)
             ~ " | MinGap: " ~ toString(round(minGap * 10) / 10)
