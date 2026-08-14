@@ -157,8 +157,6 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         //   策略: 不能直接取全局maxR(会被凸缘占据). 改用半径直方图找"齿顶圆"半径:
         //   把顶点按半径分桶, 找顶点数最多的桶(齿尖顶点最多), 该桶半径=tipCircleR.
         //   凸缘顶点数少(每圈凸缘只有少量顶点), 不会主导直方图.
-        var tipR = globalMaxR;
-
         var allVertices = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.VERTEX));
         var vertexPoints = [];
         for (var v in allVertices)
@@ -196,13 +194,13 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
         // 找最高桶(齿顶圆半径所在), 但只在半径>50%maxR的桶里找(排除内孔)
         var bestBin = 0;
-        var bestCount = 0;
+        var bestHistoCount = 0;
         for (var i = 0; i < NBINS; i += 1)
         {
             var binR = minVR + rRange * (i + 0.5) / NBINS;
-            if (binR > globalMaxVR * 0.5 && rHisto[i] > bestCount)
+            if (binR > globalMaxVR * 0.5 && rHisto[i] > bestHistoCount)
             {
-                bestCount = rHisto[i];
+                bestHistoCount = rHisto[i];
                 bestBin = i;
             }
         }
@@ -268,7 +266,6 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 clusterThresh = thresh;
             }
         }
-        var medianGap = sortedGaps[size(sortedGaps) / 2];
 
         // 数gap > 阈值的次数 = 齿间分隔数 = 齿数
         var teeth = 0;
@@ -300,14 +297,8 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
 
         // 校验: 大gap平均值应接近 360/teeth
         var expectedGap = 360 / teeth;
-        var coveredBins = tipVertexCount;
-        var rawHighRegions = teeth;
         var bigGaps = bigGapCount;
-        var highBinCount = tipVertexCount;
-        var dedendumR = 0 * meter;
         var thresh = clusterThresh;
-        var amplitude = 0 * meter;
-        var rootR = 0 * meter;
 
         // ---------- 6. 输出 -------------------------------------------------
         var diagMsg = "Teeth: " ~ toString(teeth)
