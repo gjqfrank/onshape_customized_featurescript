@@ -292,33 +292,15 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             }
         }
 
-        // 双峰gap分离(Otsu式): 找一个阈值把gaps分成"小gap(同齿内)"和"大gap(齿间)"两类
-        // 使类内方差最小(等价于类间方差最大).
-        // 比中位数稳健: 中位数在顶点分布不均时会落在错误位置.
+        // 聚类数齿: 用最大gap估计齿距, 再按齿距的一半聚类
+        // maxGap是最大的齿间gap, 360/maxGap给出齿数下界估计
+        // 阈值 = 估计齿距 * 0.5 (同齿内gap < 半齿距, 齿间gap > 半齿距)
         var sortedGaps = sort(gaps, function(a, b) { return a - b; });
-        var minGap = sortedGaps[0];
         var maxGap = sortedGaps[size(sortedGaps) - 1];
-        var clusterThresh = (minGap + maxGap) / 2;
-        var bestVar = -1;
-        for (var t = 0; t < size(sortedGaps) - 1; t += 1)
-        {
-            var thresh = (sortedGaps[t] + sortedGaps[t + 1]) / 2;
-            var n1 = t + 1;
-            var n2 = size(sortedGaps) - n1;
-            if (n1 == 0 || n2 == 0) continue;
-            var sum1 = 0;
-            for (var i = 0; i <= t; i += 1) sum1 += sortedGaps[i];
-            var mean1 = sum1 / n1;
-            var sum2 = 0;
-            for (var i = t + 1; i < size(sortedGaps); i += 1) sum2 += sortedGaps[i];
-            var mean2 = sum2 / n2;
-            var w = n1 * n2 * (mean1 - mean2) * (mean1 - mean2);
-            if (w > bestVar)
-            {
-                bestVar = w;
-                clusterThresh = thresh;
-            }
-        }
+        var estTeeth = floor(360 / maxGap + 0.5);
+        if (estTeeth < 1) estTeeth = 1;
+        var estPitch = 360 / estTeeth;
+        var clusterThresh = estPitch * 0.5;
 
         // 数gap > 阈值的次数 = 齿间分隔数 = 齿数
         var teeth = 0;
