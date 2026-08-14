@@ -120,10 +120,10 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             refU = normalize(cross(axisDir, vector(0, 1, 0)));
         var refV = cross(axisDir, refU);
 
-        // 每边采样数: 总采样约1440点, 每边最少8点
-        var samplesPerEdge = floor(1440 / size(allEdges));
-        if (samplesPerEdge < 8)
-            samplesPerEdge = 8;
+        // 每边采样数: 总采样约2880点, 每边最少16点(提高角度分辨率, 减少空桶)
+        var samplesPerEdge = floor(2880 / size(allEdges));
+        if (samplesPerEdge < 16)
+            samplesPerEdge = 16;
 
         // 第一遍: 收集所有采样点, 找全局最大半径
         var allSampleData = [];
@@ -214,6 +214,54 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             }
         }
 
+        // 形态学平滑: 开运算(腐蚀→膨胀)去掉齿间间隙中的窄假峰
+        //               闭运算(膨胀→腐蚀)填补齿顶的窄凹陷
+        // 窗口±2(共5°), 对10T齿轮(齿距36°)安全, 不会合并相邻齿
+        var SMW = 2;
+        var eroded = [];
+        for (var i = 0; i < NBUCKET; i += 1)
+        {
+            var mn = profile[i];
+            for (var j = -SMW; j <= SMW; j += 1)
+            {
+                var k = (i + j + NBUCKET) % NBUCKET;
+                if (profile[k] < mn) mn = profile[k];
+            }
+            eroded = append(eroded, mn);
+        }
+        var opened = [];
+        for (var i = 0; i < NBUCKET; i += 1)
+        {
+            var mx = eroded[i];
+            for (var j = -SMW; j <= SMW; j += 1)
+            {
+                var k = (i + j + NBUCKET) % NBUCKET;
+                if (eroded[k] > mx) mx = eroded[k];
+            }
+            opened = append(opened, mx);
+        }
+        var dilated = [];
+        for (var i = 0; i < NBUCKET; i += 1)
+        {
+            var mx = opened[i];
+            for (var j = -SMW; j <= SMW; j += 1)
+            {
+                var k = (i + j + NBUCKET) % NBUCKET;
+                if (opened[k] > mx) mx = opened[k];
+            }
+            dilated = append(dilated, mx);
+        }
+        for (var i = 0; i < NBUCKET; i += 1)
+        {
+            var mn = dilated[i];
+            for (var j = -SMW; j <= SMW; j += 1)
+            {
+                var k = (i + j + NBUCKET) % NBUCKET;
+                if (dilated[k] < mn) mn = dilated[k];
+            }
+            profile[i] = mn;
+        }
+
         var tipR = 0 * meter;
         var rootR = profile[0];
         for (var i = 0; i < NBUCKET; i += 1)
@@ -223,11 +271,22 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
 
         var teeth = 0;
+        var rawMidCross = 0;
         var amplitude = tipR - rootR;
         if (amplitude > tipR * 0.005)
         {
             var upThresh = tipR - amplitude * 0.3;
             var downThresh = rootR + amplitude * 0.3;
+            var midThresh = rootR + amplitude * 0.5;
+
+            // 诊断: 中线上升沿次数(无滞回, 仅参考)
+            var midHigh = false;
+            for (var i = 0; i < NBUCKET; i += 1)
+            {
+                if (!midHigh && profile[i] > midThresh) { midHigh = true; rawMidCross += 1; }
+                else if (midHigh && profile[i] < midThresh) { midHigh = false; }
+            }
+
             // 从一个低于下沿的桶(齿根)开始, 避免起始状态歧义
             var startBin = 0;
             var foundStart = false;
@@ -277,12 +336,12 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
 
         // ---------- 6. 输出 -------------------------------------------------
         var diagMsg = "Teeth: " ~ toString(teeth)
+            ~ " | RawMidCross: " ~ toString(rawMidCross)
             ~ " | Tip R: " ~ toString(tipR)
             ~ " | Root R: " ~ toString(rootR)
             ~ " | Amplitude: " ~ toString(amplitude)
             ~ " | Tip vertices: " ~ toString(tipVertexCount)
-            ~ " | VMaxR: " ~ toString(vertexMaxR)
-            ~ " | GlobalMaxR: " ~ toString(globalMaxR)
+            ~ " | Samples: " ~ toString(size(allSampleData))
             ~ " | Edges: " ~ toString(size(allEdges));
 
         reportFeatureInfo(context, id, diagMsg);
