@@ -117,6 +117,9 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         // 遍历所有边, 按角度分360桶, 每桶取最大半径 = 最外围轮廓
         var allEdges = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.EDGE));
 
+        if (size(allEdges) == 0)
+            throw "未找到边，无法采样。";
+
         var refU;
         if (abs(axisDir[0]) < 0.9)
             refU = normalize(cross(axisDir, vector(1, 0, 0)));
@@ -129,9 +132,12 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         for (var b = 0; b < NUM_BUCKETS; b += 1)
             buckets[] = append(buckets[], 0 * meter);
 
-        // 根据边总数调整每边采样数, 总采样约2000点
-        var samplesPerEdge = max(4, floor(2000 / size(allEdges)));
+        // 每边采样数: 总采样约2000点, 最少4点(手动max, FeatureScript的max只支持ValueWithUnits)
+        var samplesPerEdge = floor(2000 / size(allEdges));
+        if (samplesPerEdge < 4)
+            samplesPerEdge = 4;
 
+        var sampleCount = 0;
         for (var edge in allEdges)
         {
             for (var i = 0; i < samplesPerEdge; i += 1)
@@ -141,6 +147,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                     var t = (i + 0.5) / samplesPerEdge;
                     var pt = evEdgeTangentLine(context, { "edge" : edge, "parameter" : t }).origin;
                     var r = radialDistance(pt, axisOrigin, axisDir);
+                    sampleCount += 1;
                     var d = pt - axisOrigin;
                     var proj = d - dot(d, axisDir) * axisDir;
                     var angle = atan2(dot(proj, refV), dot(proj, refU));
@@ -170,7 +177,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
 
         if (rMax <= 0 * meter)
-            throw "采样失败, 未获取到有效半径。";
+            throw "采样失败, 未获取到有效半径。成功采样点数: " ~ toString(sampleCount) ~ " / 边数: " ~ toString(size(allEdges));
 
         var toothHeight = rMax - rMin;
         var tipThreshold = rMin + toothHeight * 0.7;
