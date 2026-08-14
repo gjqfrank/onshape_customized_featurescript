@@ -151,12 +151,11 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         if (size(allSampleData) < 4)
             throw "Sampling failed. Samples: " ~ toString(size(allSampleData)) ~ " / Edges: " ~ toString(size(allEdges));
 
-        // ---------- 5. 齿尖顶点角度自相关(主方法) ---------------------------
-        // 红点(齿尖顶点)位置是准的, 直接用齿尖顶点的角度做周期性分析.
-        // 方法: 把齿尖顶点按角度放入360桶(每齿1簇, 簇内有1~4个顶点),
-        //       然后做圆周自相关: 对候选齿数N, 平移360/N后看重合度.
-        //       真齿数N时每簇对齐到下一簇, 重合度最大.
-        // 优点: 只用最外围顶点(齿尖), 不受齿侧/齿根/内孔干扰.
+        // ---------- 5. 齿尖顶点聚类数齿(主方法) -----------------------------
+        // 红点(齿尖顶点)位置准, 但每齿可能有1~4个顶点(平顶齿两角+圆角).
+        // 自相关法的问题: N翻倍时(同齿2顶点)或N过小时(虚假周期)分数也高.
+        // 新方法: 角度差聚类 — 把角度差<阈值的相邻顶点合并为一齿,
+        //         簇数=齿数. 阈值自适应: 用角度差的中位数*因子.
         var tipR = globalMaxR;
 
         var allVertices = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.VERTEX));
@@ -175,7 +174,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
 
         // 齿尖顶点: radius > 98% vertexMaxR (红点同样标准)
         var tipVertexCount = 0;
-        var tipAngles = []; // 角度(度), 用于自相关
+        var tipAngles = []; // 角度(度)
         for (var vp in vertexPoints)
         {
             if (vp.radius > vertexMaxR * 0.98)
@@ -192,80 +191,82 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
 
         if (tipVertexCount < 3)
-            throw "Too few tip vertices (" ~ toString(tipVertexCount) ~ ") for autocorrelation.";
+            throw "Too few tip vertices (" ~ toString(tipVertexCount) ~ ") for clustering.";
 
-        // 角度直方图(1°一桶), 齿尖顶点按角度入桶
-        var NB = 360;
-        var angHisto = [];
-        for (var i = 0; i < NB; i += 1)
-            angHisto = append(angHisto, 0);
-        for (var a in tipAngles)
+        // 按角度排序
+        tipAngles = sort(tipAngles, function(a, b) { return a - b; });
+
+        // 计算所有相邻角度差(含wrap-around)
+        var gaps = [];
+        for (var i = 1; i < size(tipAngles); i += 1)
+            gaps = append(gaps, tipAngles[i] - tipAngles[i - 1]);
+        // wrap gap: 从最后一个到第一个(跨360)
+        var wrapGap = (360 - tipAngles[size(tipAngles) - 1]) + tipAngles[0];
+        gaps = append(gaps, wrapGap);
+
+        // 排序gaps, 找"大gap"(齿间)和"小gap"(同齿内)
+        // 真齿数时: 小gap(同齿顶点间距) << 大gap(齿间距)
+        // 用gaps的中位数估计: 大gap ≈ 360/齿数, 小gap << 大gap
+        var sortedGaps = sort(gaps, function(a, b) { return a - b; });
+        var medianGap = sortedGaps[size(sortedGaps) / 2];
+
+        // 阈值: 介于小gap和大gap之间. 用中位数*2(如果中位数是小gap)或中位数*0.5(如果中位数是大gap)
+        // 更稳健: 阈值 = 中位数. 大gap>中位数, 小gap<中位数
+        var clusterThresh = medianGap;
+
+        // 数gap > 阈值的次数 = 齿间分隔数 = 齿数
+        var teeth = 0;
+        for (var g in gaps)
         {
-            var bin = floor(a / 360 * NB);
-            if (bin >= NB) bin = NB - 1;
-            if (bin < 0) bin = 0;
-            angHisto[bin] += 1;
+            if (g > clusterThresh)
+                teeth += 1;
         }
+        if (teeth < 1)
+            teeth = 1;
 
-        var coveredBins = 0;
-        for (var i = 0; i < NB; i += 1)
-            if (angHisto[i] > 0) coveredBins += 1;
-
-        // 自相关: 对候选齿数 N=3..80, 计算周期 360/N 的自相关分数
-        // 分数 = sum(histo[i] * histo[(i + shift) mod NB]) / (sum(histo[i]^2))
-        // shift = round(NB / N) (一个齿距对应的桶数)
-        // 真齿数时, shift 把每齿的簇对齐到下一齿的簇, 重合度高 → 分数高
-        var bestTeeth = 1;
-        var bestScore = 0.0;
-        var scores = [];
-        for (var N = 3; N <= 80; N += 1)
-        {
-            var shift = floor(NB / N + 0.5);
-            if (shift < 1) shift = 1;
-            var numer = 0.0;
-            var denom = 0.0;
-            for (var i = 0; i < NB; i += 1)
-            {
-                var j = (i + shift) % NB;
-                numer += angHisto[i] * angHisto[j];
-                denom += angHisto[i] * angHisto[i];
-            }
-            var score = 0.0;
-            if (denom > 0)
-                score = numer / denom;
-            scores = append(scores, score);
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestTeeth = N;
-            }
-        }
-
-        var teeth = bestTeeth;
-        var rawHighRegions = 0;
-        var bigGaps = 0;
-        var highBinCount = 0;
-        var minGap = 0;
+        // 诊断: gap统计
+        var smallGapCount = 0;
+        var bigGapCount = 0;
+        var minGap = 999;
         var maxGap = 0;
+        var bigGapSum = 0;
+        for (var g in gaps)
+        {
+            if (g > clusterThresh)
+            {
+                bigGapCount += 1;
+                bigGapSum += g;
+            }
+            else
+                smallGapCount += 1;
+            if (g < minGap) minGap = g;
+            if (g > maxGap) maxGap = g;
+        }
+        var bigGapAvg = 0;
+        if (bigGapCount > 0)
+            bigGapAvg = bigGapSum / bigGapCount;
+
+        // 校验: 大gap平均值应接近 360/teeth
+        var expectedGap = 360 / teeth;
+        var coveredBins = tipVertexCount;
+        var rawHighRegions = teeth;
+        var bigGaps = bigGapCount;
+        var highBinCount = tipVertexCount;
         var dedendumR = 0 * meter;
-        var thresh = 0 * meter;
+        var thresh = clusterThresh;
         var amplitude = 0 * meter;
         var rootR = 0 * meter;
 
         // ---------- 6. 输出 -------------------------------------------------
-        // 显示最佳分数附近几个候选齿数的分数, 便于判断
-        var scoreStr = "";
-        for (var i = 0; i < size(scores); i += 1)
-        {
-            var N = i + 3;
-            if (N >= bestTeeth - 2 && N <= bestTeeth + 2)
-                scoreStr = scoreStr ~ toString(N) ~ ":" ~ toString(round(scores[i] * 1000) / 1000) ~ " ";
-        }
         var diagMsg = "Teeth: " ~ toString(teeth)
-            ~ " | BestScore: " ~ toString(round(bestScore * 1000) / 1000)
-            ~ " | Scores: " ~ scoreStr
-            ~ " | CoveredBins: " ~ toString(coveredBins)
             ~ " | Tip vertices: " ~ toString(tipVertexCount)
+            ~ " | BigGaps: " ~ toString(bigGaps)
+            ~ " | SmallGaps: " ~ toString(smallGapCount)
+            ~ " | MedianGap: " ~ toString(round(medianGap * 10) / 10)
+            ~ " | BigGapAvg: " ~ toString(round(bigGapAvg * 10) / 10)
+            ~ " | ExpectedGap: " ~ toString(round(expectedGap * 10) / 10)
+            ~ " | MinGap: " ~ toString(round(minGap * 10) / 10)
+            ~ " | MaxGap: " ~ toString(round(maxGap * 10) / 10)
             ~ " | Tip R: " ~ toString(tipR)
             ~ " | Edges: " ~ toString(size(allEdges));
 
