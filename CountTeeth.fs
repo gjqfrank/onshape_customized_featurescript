@@ -123,8 +123,6 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         debug(context, centerOnAxis, DebugColor.YELLOW);
 
         // ---------- 4. 全局径向采样 -----------------------------------------
-        // 遍历所有边, 收集 (角度, 半径) 对到普通数组
-        // (append 在FS中可靠工作, 不用box/bucket避免数组原地修改问题)
         var allEdges = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.EDGE));
 
         if (size(allEdges) == 0)
@@ -137,14 +135,14 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             refU = normalize(cross(axisDir, vector(0, 1, 0)));
         var refV = cross(axisDir, refU);
 
-        // 每边采样数: 总采样约1440点(4点/度, 足够数齿), 每边最少8点
+        // 每边采样数: 总采样约1440点, 每边最少8点
         var samplesPerEdge = floor(1440 / size(allEdges));
         if (samplesPerEdge < 8)
             samplesPerEdge = 8;
 
-        // 收集所有采样点: {angle, radius}
-        var sampleData = [];
-        var sampleCount = 0;
+        // 第一遍: 收集所有采样点, 找全局最大半径
+        var allSampleData = [];
+        var globalMaxR = 0 * meter;
         for (var edge in allEdges)
         {
             for (var i = 0; i < samplesPerEdge; i += 1)
@@ -152,25 +150,34 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 var t = (i + 0.5) / samplesPerEdge;
                 try silent
                 {
-                    var tl = evEdgeTangentLine(context, { "edge" : edge, "parameter" : t });
-                    var pt = tl.origin;
+                    var pt = evEdgeTangentLine(context, { "edge" : edge, "parameter" : t }).origin;
                     var r = radialDistance(pt, axisOrigin, axisDir);
                     var d = pt - axisOrigin;
                     var proj = d - dot(d, axisDir) * axisDir;
                     var angle = atan2(dot(proj, refV), dot(proj, refU));
                     if (angle < 0)
                         angle += 2 * PI;
-                    sampleData = append(sampleData, { "angle" : angle, "radius" : r });
-                    sampleCount += 1;
+                    allSampleData = append(allSampleData, { "angle" : angle, "radius" : r });
+                    if (r > globalMaxR) globalMaxR = r;
                 }
             }
         }
 
-        if (sampleCount < 4)
-            throw "Sampling failed. Samples: " ~ toString(sampleCount) ~ " / Edges: " ~ toString(size(allEdges));
+        if (size(allSampleData) < 4)
+            throw "Sampling failed. Samples: " ~ toString(size(allSampleData)) ~ " / Edges: " ~ toString(size(allEdges));
+
+        // 第二遍: 过滤非齿廓采样点(只保留半径 > 50% maxR, 排除减重孔/内孔)
+        var sampleData = [];
+        for (var sd in allSampleData)
+        {
+            if (sd.radius > globalMaxR * 0.5)
+                sampleData = append(sampleData, sd);
+        }
+
+        if (size(sampleData) < 4)
+            throw "No tooth-area samples after filtering. GlobalMaxR: " ~ toString(globalMaxR);
 
         // ---------- 5. 按角度排序, 提取半径序列 ------------------------------
-        // FS sort的comparator返回number(负/零/正), 不是boolean
         sampleData = sort(sampleData, function(a, b)
         {
             return a.angle - b.angle;
@@ -188,12 +195,31 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             if (s < rMin) rMin = s;
         }
 
-        if (rMax <= 0 * meter)
-            throw "All sample radii are zero. Samples: " ~ toString(sampleCount);
-
         var toothHeight = rMax - rMin;
         var tipThreshold = rMin + toothHeight * 0.7;
         var teeth = (toothHeight / rMax < 0.005) ? 0 : countPeaksAbove(samples, tipThreshold);
+
+        // ---------- 5b. 顶点计数(交叉验证) ----------------------------------
+        // 每个齿尖通常有顶点, 数半径接近maxR的顶点
+        var allVertices = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.VERTEX));
+        var vertexTeeth = 0;
+        var vertexMaxR = 0 * meter;
+        var vertexRadii = [];
+        for (var v in allVertices)
+        {
+            try silent
+            {
+                var pt = evVertexPoint(context, { "vertex" : v });
+                var r = radialDistance(pt, axisOrigin, axisDir);
+                vertexRadii = append(vertexRadii, r);
+                if (r > vertexMaxR) vertexMaxR = r;
+            }
+        }
+        for (var r in vertexRadii)
+        {
+            if (r > vertexMaxR * 0.95)
+                vertexTeeth += 1;
+        }
 
         // 红色标出齿顶采样点
         if (teeth > 0)
@@ -214,7 +240,6 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
 
         // ---------- 6. 输出 -------------------------------------------------
-        // 统计角度覆盖情况(诊断用)
         var angleMin = sampleData[0].angle;
         var angleMax = sampleData[0].angle;
         for (var sd in sampleData)
@@ -222,16 +247,17 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             if (sd.angle < angleMin) angleMin = sd.angle;
             if (sd.angle > angleMax) angleMax = sd.angle;
         }
+        var angleRangeDeg = (angleMax - angleMin) * 180 / PI;
 
         var diagMsg = "Teeth: " ~ toString(teeth)
+            ~ " | VertexTeeth: " ~ toString(vertexTeeth)
             ~ " | Tip R: " ~ toString(rMax)
             ~ " | Root R: " ~ toString(rMin)
             ~ " | Height: " ~ toString(toothHeight)
-            ~ " | Samples: " ~ toString(sampleCount)
-            ~ " | Angle range: " ~ toString(angleMin * 180 / PI) ~ " to " ~ toString(angleMax * 180 / PI)
-            ~ " | Cyl axes: " ~ toString(size(axes))
-            ~ " | Concentric: " ~ toString(bestCount)
-            ~ " | Edges: " ~ toString(size(allEdges));
+            ~ " | Samples: " ~ toString(size(sampleData)) ~ "/" ~ toString(size(allSampleData))
+            ~ " | Angle: " ~ toString(angleMin * 180 / PI) ~ "-" ~ toString(angleMax * 180 / PI) ~ " (" ~ toString(angleRangeDeg) ~ "deg)"
+            ~ " | Vertices: " ~ toString(size(vertexRadii))
+            ~ " | VMaxR: " ~ toString(vertexMaxR);
 
         reportFeatureInfo(context, id, diagMsg);
         println(diagMsg);
