@@ -170,22 +170,12 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             throw "Sampling failed. Samples: " ~ toString(sampleCount) ~ " / Edges: " ~ toString(size(allEdges));
 
         // ---------- 5. 按角度排序, 提取半径序列 ------------------------------
-        // 选择排序(sampleCount <= 720, O(n^2)可接受)
-        for (var i = 0; i < size(sampleData) - 1; i += 1)
+        // 用FS内置sort避免O(n^2)选择排序 + map字段访问的性能问题
+        // sort的key函数返回角度, 比较纯number比访问map快得多
+        sampleData = sort(sampleData, function(a, b)
         {
-            var minIdx = i;
-            for (var j = i + 1; j < size(sampleData); j += 1)
-            {
-                if (sampleData[j].angle < sampleData[minIdx].angle)
-                    minIdx = j;
-            }
-            if (minIdx != i)
-            {
-                var tmp = sampleData[i];
-                sampleData[i] = sampleData[minIdx];
-                sampleData[minIdx] = tmp;
-            }
-        }
+            return a.angle < b.angle;
+        });
 
         var samples = [];
         for (var sd in sampleData)
