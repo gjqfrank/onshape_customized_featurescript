@@ -136,12 +136,12 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             refU = normalize(cross(axisDir, vector(0, 1, 0)));
         var refV = cross(axisDir, refU);
 
-        // 360个独立box做buckets —— FeatureScript中box数组的元素赋值(buckets[][i]=x)不生效,
-        // 必须用独立box, 每个box单独读写
+        // 用一个box包整个数组来累积半径 —— FeatureScript中数组本身是值类型,
+        // 必须通过box间接修改才能在循环里持久化
         var NUM_BUCKETS = 360;
-        var buckets = [];
+        var bucketsBox = new box([]);
         for (var b = 0; b < NUM_BUCKETS; b += 1)
-            buckets = append(buckets, new box(0 * meter));
+            bucketsBox[] = append(bucketsBox[], 0 * meter);
 
         // 每边采样数: 总采样约2000点, 最少4点
         var samplesPerEdge = floor(2000 / size(allEdges));
@@ -167,17 +167,18 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                     var bucketIdx = floor(angle / (2 * PI) * NUM_BUCKETS);
                     if (bucketIdx >= NUM_BUCKETS)
                         bucketIdx = NUM_BUCKETS - 1;
-                    if (r > buckets[bucketIdx][])
-                        buckets[bucketIdx][] = r;
+                    if (r > bucketsBox[][bucketIdx])
+                    {
+                        var arr = bucketsBox[];
+                        arr[bucketIdx] = r;
+                        bucketsBox[] = arr;
+                    }
                 }
             }
         }
 
         // ---------- 5. 数齿 -------------------------------------------------
-        // 从360个独立box收集半径值
-        var samples = [];
-        for (var b = 0; b < NUM_BUCKETS; b += 1)
-            samples = append(samples, buckets[b][]);
+        var samples = bucketsBox[]; // 360个半径值, 按角度排列
 
         var rMax = 0 * meter;
         var rMin = 1e10 * meter;
