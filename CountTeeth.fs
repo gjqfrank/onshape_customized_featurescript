@@ -153,20 +153,13 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
 
         // ---------- 5. 齿尖顶点聚类数齿(主方法) -----------------------------
         // 红点(齿尖顶点)位置准, 但每齿可能有1~4个顶点(平顶齿两角+圆角).
-        // pulley注意: 上下有凸缘(flange), 比齿顶高. 必须先过滤掉凸缘顶点:
-        //   只保留轴向位置接近几何中心的顶点(齿尖在中间, 凸缘在两端).
+        // pulley注意: 上下有凸缘(flange), 比齿顶高. 必须先过滤掉凸缘顶点.
+        // 策略: 收集所有顶点的(角度,半径,轴向位置), 按轴向位置排序,
+        //   去掉两端各10%的顶点(凸缘区), 用中间80%找maxR和齿尖.
+        //   对gear(无凸缘)也适用: 去掉两端10%不影响齿尖(齿尖在中间).
         var tipR = globalMaxR;
 
-        // 计算几何中心在轴上的位置(已有 centerOnAxis), 及轴向高度范围
-        // 轴向高度 = bbox 在轴方向的投影长度
-        var bboxDiag = bbox.maxCorner - bbox.minCorner;
-        var bboxHeight = abs(dot(bboxDiag, axisDir));
-        // 齿尖区: 轴向位置在中心附近 ±25% 高度内(排除两端凸缘)
-        var axialCenter = dot(centerOnAxis - axisOrigin, axisDir);
-        var axialHalfRange = bboxHeight * 0.25;
-
         var allVertices = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.VERTEX));
-        var vertexMaxR = 0 * meter;
         var vertexPoints = [];
         for (var v in allVertices)
         {
@@ -176,18 +169,30 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 var r = radialDistance(pt, axisOrigin, axisDir);
                 var axialPos = dot(pt - axisOrigin, axisDir);
                 vertexPoints = append(vertexPoints, { "point" : pt, "radius" : r, "axialPos" : axialPos });
-                // 只用齿尖区(中间)的顶点找maxR, 排除凸缘
-                if (abs(axialPos - axialCenter) < axialHalfRange && r > vertexMaxR)
-                    vertexMaxR = r;
             }
         }
 
-        // 齿尖顶点: 在齿尖区(中间) 且 radius > 98% vertexMaxR
+        // 按轴向位置排序, 找中间80%的轴向范围(去掉两端各10%, 排除凸缘)
+        var sortedByAxial = sort(vertexPoints, function(a, b) { return (a.axialPos - b.axialPos) / meter; });
+        var nVerts = size(sortedByAxial);
+        var trimCount = floor(nVerts * 0.10);
+        var axialLo = sortedByAxial[trimCount].axialPos;
+        var axialHi = sortedByAxial[nVerts - 1 - trimCount].axialPos;
+
+        // 在中间轴向范围内找最大半径(齿顶圆, 排除凸缘)
+        var vertexMaxR = 0 * meter;
+        for (var vp in vertexPoints)
+        {
+            if (vp.axialPos >= axialLo && vp.axialPos <= axialHi && vp.radius > vertexMaxR)
+                vertexMaxR = vp.radius;
+        }
+
+        // 齿尖顶点: 在中间轴向范围 且 radius > 98% vertexMaxR
         var tipVertexCount = 0;
         var tipAngles = []; // 角度(度)
         for (var vp in vertexPoints)
         {
-            if (abs(vp.axialPos - axialCenter) < axialHalfRange && vp.radius > vertexMaxR * 0.98)
+            if (vp.axialPos >= axialLo && vp.axialPos <= axialHi && vp.radius > vertexMaxR * 0.98)
             {
                 debug(context, vp.point, DebugColor.RED);
                 tipVertexCount += 1;
