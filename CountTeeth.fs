@@ -151,22 +151,48 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         if (size(allSampleData) < 4)
             throw "Sampling failed. Samples: " ~ toString(size(allSampleData)) ~ " / Edges: " ~ toString(size(allEdges));
 
-        // ---------- 5. 径向剖面 + 滞回阈值计数(主方法) ---------------------
-        // 对平顶齿(gear)和尖顶齿(sprocket/pulley)都鲁棒:
-        //   - 按1°分360桶, 每桶取最大半径 → "角度-半径"剖面
-        //     (外缘齿廓是闭合环覆盖整圈; 取max可自然压掉减重孔/内孔, 因为齿顶半径永远最大)
-        //   - tipR=剖面最大值(齿顶), rootR=剖面最小值(齿根)
-        //   - 滞回: 上沿阈值=tipR-30%幅值, 下沿阈值=rootR+30%幅值
-        //     每齿: 升过上沿(计数1) → 降过下沿(复位). 平顶齿整段高于上沿只算1次, 不会算成2齿
+        // ---------- 5. 自适应阈值 + 连续高区计数(主方法) -------------------
+        // 问题: max-per-bin 剖面的最小值是内孔(boer)半径, 不是齿根圆(dedendum),
+        //   导致阈值算错. 解决:
+        //   a. tipR = 全局最大半径(齿顶圆)
+        //   b. 过滤掉内孔/轮毂样本: 只保留 radius > 0.5*tipR 的样本(外缘齿廓区)
+        //   c. dedendumR = 过滤后样本的最小半径(真正的齿根圆)
+        //   d. thresh = (tipR + dedendumR) / 2 (齿顶与齿根的中线)
+        //   e. 每角度桶取max, 标记 bin > thresh 为"高"
+        //   f. 数连续高区个数, 跨过窄低缝(<3°)合并, 忽略窄高区(<3°)噪声
+        //   对平顶齿(整段高=1区)和尖顶齿(单峰=1区)都鲁棒
+        var tipR = globalMaxR;
+
+        // 过滤内孔/轮毂: 只留 radius > 0.5*tipR 的样本
+        var outerSamples = [];
+        for (var sd in allSampleData)
+        {
+            if (sd.radius > tipR * 0.5)
+                outerSamples = append(outerSamples, sd);
+        }
+        if (size(outerSamples) < 4)
+            throw "No outer-profile samples after bore filter. tipR: " ~ toString(tipR);
+
+        // dedendumR = 外缘样本的最小半径(真齿根圆)
+        var dedendumR = outerSamples[0].radius;
+        for (var sd in outerSamples)
+        {
+            if (sd.radius < dedendumR) dedendumR = sd.radius;
+        }
+
+        var amplitude = tipR - dedendumR;
+        var thresh = dedendumR + amplitude * 0.5;
+
+        // 每桶取最大半径(只用外缘样本)
         var NBUCKET = 360;
         var profile = [];
         var hasSample = [];
         for (var i = 0; i < NBUCKET; i += 1)
         {
-            profile = append(profile, 0 * meter);
+            profile = append(profile, dedendumR);
             hasSample = append(hasSample, false);
         }
-        for (var sd in allSampleData)
+        for (var sd in outerSamples)
         {
             var angleDeg = sd.angle / degree;
             if (angleDeg < 0)
@@ -183,71 +209,25 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             }
         }
 
-        // 填补空桶(圆周上线性插值相邻已填桶), 保证剖面连续
+        // 填补空桶(用 dedendumR, 因为缺采样的角度大概率是齿根区)
         for (var i = 0; i < NBUCKET; i += 1)
         {
             if (!hasSample[i])
             {
-                var prev = -1;
-                var next = -1;
-                for (var j = 1; j <= NBUCKET; j += 1)
-                {
-                    var pi = (i - j + NBUCKET) % NBUCKET;
-                    if (hasSample[pi]) { prev = pi; break; }
-                }
-                for (var j = 1; j <= NBUCKET; j += 1)
-                {
-                    var ni = (i + j) % NBUCKET;
-                    if (hasSample[ni]) { next = ni; break; }
-                }
-                if (prev >= 0 && next >= 0)
-                {
-                    var span = (next - prev + NBUCKET) % NBUCKET;
-                    var dp = (i - prev + NBUCKET) % NBUCKET;
-                    if (span == 0)
-                        profile[i] = profile[prev];
-                    else
-                        profile[i] = profile[prev] + (profile[next] - profile[prev]) * (dp / span);
-                }
-                else if (prev >= 0)
-                    profile[i] = profile[prev];
+                profile[i] = dedendumR;
             }
         }
 
-        // 形态学平滑: 开运算(腐蚀→膨胀)去掉齿间间隙中的窄假峰
-        //               闭运算(膨胀→腐蚀)填补齿顶的窄凹陷
-        // 窗口±2(共5°), 对10T齿轮(齿距36°)安全, 不会合并相邻齿
-        var SMW = 2;
-        var eroded = [];
-        for (var i = 0; i < NBUCKET; i += 1)
-        {
-            var mn = profile[i];
-            for (var j = -SMW; j <= SMW; j += 1)
-            {
-                var k = (i + j + NBUCKET) % NBUCKET;
-                if (profile[k] < mn) mn = profile[k];
-            }
-            eroded = append(eroded, mn);
-        }
-        var opened = [];
-        for (var i = 0; i < NBUCKET; i += 1)
-        {
-            var mx = eroded[i];
-            for (var j = -SMW; j <= SMW; j += 1)
-            {
-                var k = (i + j + NBUCKET) % NBUCKET;
-                if (eroded[k] > mx) mx = eroded[k];
-            }
-            opened = append(opened, mx);
-        }
+        // 轻度闭运算(膨胀→腐蚀, 窗口±1°=3°): 填补齿顶的1°窄凹陷, 不影响齿形
+        var SMW = 1;
         var dilated = [];
         for (var i = 0; i < NBUCKET; i += 1)
         {
-            var mx = opened[i];
+            var mx = profile[i];
             for (var j = -SMW; j <= SMW; j += 1)
             {
                 var k = (i + j + NBUCKET) % NBUCKET;
-                if (opened[k] > mx) mx = opened[k];
+                if (profile[k] > mx) mx = profile[k];
             }
             dilated = append(dilated, mx);
         }
@@ -262,54 +242,65 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             profile[i] = mn;
         }
 
-        var tipR = 0 * meter;
-        var rootR = profile[0];
+        // 布尔剖面: bin 高 = profile[bin] > thresh
+        var high = [];
         for (var i = 0; i < NBUCKET; i += 1)
-        {
-            if (profile[i] > tipR) tipR = profile[i];
-            if (profile[i] < rootR) rootR = profile[i];
-        }
+            high = append(high, profile[i] > thresh);
 
+        // 数连续高区, 跨过窄低缝(<MINGAP°)合并
+        var MINGAP = 3;
         var teeth = 0;
-        var rawMidCross = 0;
-        var amplitude = tipR - rootR;
-        if (amplitude > tipR * 0.005)
+        var rawHighRegions = 0;
         {
-            var upThresh = tipR - amplitude * 0.3;
-            var downThresh = rootR + amplitude * 0.3;
-            var midThresh = rootR + amplitude * 0.5;
-
-            // 诊断: 中线上升沿次数(无滞回, 仅参考)
-            var midHigh = false;
-            for (var i = 0; i < NBUCKET; i += 1)
-            {
-                if (!midHigh && profile[i] > midThresh) { midHigh = true; rawMidCross += 1; }
-                else if (midHigh && profile[i] < midThresh) { midHigh = false; }
-            }
-
-            // 从一个低于下沿的桶(齿根)开始, 避免起始状态歧义
+            // 找第一个低桶作为起点
             var startBin = 0;
             var foundStart = false;
             for (var i = 0; i < NBUCKET; i += 1)
             {
-                if (profile[i] < downThresh) { startBin = i; foundStart = true; break; }
+                if (!high[i]) { startBin = i; foundStart = true; break; }
             }
-            if (foundStart)
-            {
-                var high = false;
-                for (var k = 0; k < NBUCKET; k += 1)
-                {
-                    var i = (startBin + k) % NBUCKET;
-                    if (!high && profile[i] > upThresh) { high = true; teeth += 1; }
-                    else if (high && profile[i] < downThresh) { high = false; }
-                }
-            }
-            else
+            if (!foundStart)
             {
                 teeth = 1;
             }
+            else
+            {
+                var inHigh = false;
+                var gapLen = 0;
+                for (var k = 0; k < NBUCKET; k += 1)
+                {
+                    var i = (startBin + k) % NBUCKET;
+                    if (high[i])
+                    {
+                        if (!inHigh)
+                        {
+                            // 检查上一个gap是否够长(够长则开新区, 否则延续)
+                            if (gapLen >= MINGAP || rawHighRegions == 0)
+                            {
+                                rawHighRegions += 1;
+                            }
+                            inHigh = true;
+                        }
+                        gapLen = 0;
+                    }
+                    else
+                    {
+                        if (inHigh)
+                            inHigh = false;
+                        gapLen += 1;
+                    }
+                }
+                // 收尾: 检查首尾相接处的gap
+                // rawHighRegions 已统计, 但如果最后一段gap < MINGAP, 首尾高区应合并
+                teeth = rawHighRegions;
+                if (gapLen < MINGAP && gapLen > 0 && rawHighRegions > 1)
+                    teeth -= 1;
+            }
         }
+        if (teeth < 1)
+            teeth = 1;
 
+        var rootR = dedendumR;
         // ---------- 5b. 红点标出齿尖顶点(仅可视化, 不参与计数) -------------
         var allVertices = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.VERTEX));
         var vertexMaxR = 0 * meter;
@@ -336,12 +327,12 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
 
         // ---------- 6. 输出 -------------------------------------------------
         var diagMsg = "Teeth: " ~ toString(teeth)
-            ~ " | RawMidCross: " ~ toString(rawMidCross)
+            ~ " | RawRegions: " ~ toString(rawHighRegions)
             ~ " | Tip R: " ~ toString(tipR)
-            ~ " | Root R: " ~ toString(rootR)
-            ~ " | Amplitude: " ~ toString(amplitude)
+            ~ " | Dedendum R: " ~ toString(dedendumR)
+            ~ " | Thresh: " ~ toString(thresh)
+            ~ " | Outer samples: " ~ toString(size(outerSamples))
             ~ " | Tip vertices: " ~ toString(tipVertexCount)
-            ~ " | Samples: " ~ toString(size(allSampleData))
             ~ " | Edges: " ~ toString(size(allEdges));
 
         reportFeatureInfo(context, id, diagMsg);
