@@ -189,7 +189,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         var hasSample = [];
         for (var i = 0; i < NBUCKET; i += 1)
         {
-            profile = append(profile, dedendumR);
+            profile = append(profile, 0 * meter);
             hasSample = append(hasSample, false);
         }
         for (var sd in outerSamples)
@@ -202,19 +202,68 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 bin = NBUCKET - 1;
             if (bin < 0)
                 bin = 0;
-            if (sd.radius > profile[bin])
+            if (!hasSample[bin] || sd.radius > profile[bin])
             {
                 profile[bin] = sd.radius;
                 hasSample[bin] = true;
             }
         }
 
-        // 填补空桶(用 dedendumR, 因为缺采样的角度大概率是齿根区)
+        // 统计角度覆盖范围
+        var coveredBins = 0;
+        var firstBin = -1;
+        var lastBin = -1;
+        for (var i = 0; i < NBUCKET; i += 1)
+        {
+            if (hasSample[i])
+            {
+                coveredBins += 1;
+                if (firstBin < 0) firstBin = i;
+                lastBin = i;
+            }
+        }
+
+        // 半径直方图: 按 (tipR - dedendumR) 分10段统计样本数
+        var rHisto = [];
+        for (var i = 0; i < 10; i += 1)
+            rHisto = append(rHisto, 0);
+        for (var sd in outerSamples)
+        {
+            var frac = (sd.radius - dedendumR) / amplitude;
+            if (frac < 0) frac = 0;
+            if (frac > 0.999) frac = 0.999;
+            rHisto[floor(frac * 10)] += 1;
+        }
+
+        // 填补空桶: 圆周上线性插值相邻已填桶
+        // (不用dedendumR填充, 那会在未采样角度制造假齿根)
         for (var i = 0; i < NBUCKET; i += 1)
         {
             if (!hasSample[i])
             {
-                profile[i] = dedendumR;
+                var prev = -1;
+                var next = -1;
+                for (var j = 1; j <= NBUCKET; j += 1)
+                {
+                    var pi = (i - j + NBUCKET) % NBUCKET;
+                    if (hasSample[pi]) { prev = pi; break; }
+                }
+                for (var j = 1; j <= NBUCKET; j += 1)
+                {
+                    var ni = (i + j) % NBUCKET;
+                    if (hasSample[ni]) { next = ni; break; }
+                }
+                if (prev >= 0 && next >= 0)
+                {
+                    var span = (next - prev + NBUCKET) % NBUCKET;
+                    var dp = (i - prev + NBUCKET) % NBUCKET;
+                    if (span == 0)
+                        profile[i] = profile[prev];
+                    else
+                        profile[i] = profile[prev] + (profile[next] - profile[prev]) * (dp / span);
+                }
+                else if (prev >= 0)
+                    profile[i] = profile[prev];
             }
         }
 
@@ -321,14 +370,15 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         // ---------- 6. 输出 -------------------------------------------------
         var diagMsg = "Teeth: " ~ toString(teeth)
             ~ " | RawRegions: " ~ toString(rawHighRegions)
-            ~ " | BigGaps: " ~ toString(bigGaps)
-            ~ " | SmallGaps: " ~ toString(smallGaps)
+            ~ " | CoveredBins: " ~ toString(coveredBins)
             ~ " | HighBins: " ~ toString(highBinCount)
+            ~ " | BigGaps: " ~ toString(bigGaps)
             ~ " | MinGap: " ~ toString(minGap)
             ~ " | MaxGap: " ~ toString(maxGap)
             ~ " | Tip R: " ~ toString(tipR)
             ~ " | Dedendum R: " ~ toString(dedendumR)
             ~ " | Thresh: " ~ toString(thresh)
+            ~ " | RHisto: [" ~ toString(rHisto[0]) ~ "," ~ toString(rHisto[1]) ~ "," ~ toString(rHisto[2]) ~ "," ~ toString(rHisto[3]) ~ "," ~ toString(rHisto[4]) ~ "," ~ toString(rHisto[5]) ~ "," ~ toString(rHisto[6]) ~ "," ~ toString(rHisto[7]) ~ "," ~ toString(rHisto[8]) ~ "," ~ toString(rHisto[9]) ~ "]"
             ~ " | Edges: " ~ toString(size(allEdges));
 
         reportFeatureInfo(context, id, diagMsg);
