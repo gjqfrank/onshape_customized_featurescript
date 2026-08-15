@@ -298,8 +298,11 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             }
         }
 
-        // 齿尖顶点: radius在tipCircleR附近(收紧容差: 直方图桶宽的70%, 排除字样顶点)
-        var tipTol = min(globalMaxVR * 0.02, rRange / NBINS * 0.7);
+        // 齿尖顶点: radius在tipCircleR附近
+        // 容差: 齿高的30% (宽松, 保证不漏齿; 字样顶点半径远小于齿尖, 不会混入)
+        // 或 globalMaxVR*5%, 取较大者确保覆盖齿尖圆角半径波动
+        var tipTol = max(globalMaxVR * 0.05, (globalMaxVR - rootR) * 0.3);
+        tipTol = min(tipTol, globalMaxVR * 0.1); // 上限10%避免混入齿根顶点
         var tipVertexCount = 0;
         // 先收集所有半径匹配的齿尖点(带角度+轴向)
         var tipPts = [];
@@ -360,9 +363,8 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         var wrapGap = (360 - tipAngles[size(tipAngles) - 1]) + tipAngles[0];
         gaps = append(gaps, wrapGap);
 
-        // 过滤孤立顶点(字样/噪点): 计算每个顶点到最近邻居的角度距离,
-        // 如果某顶点的最近邻居距离 > 平均距离的3倍, 认为是孤立点, 移除.
-        // 真齿尖顶点有邻居(同齿其他顶点或相邻齿), 字样顶点孤立.
+        // 过滤孤立顶点: 只删极端孤立点(最近邻居 > 中位nnDist的10倍)
+        // 不用3倍平均值(缺一齿时相邻齿nnDist变大, 会被误删, 连锁丢失更多齿)
         var nnDists = [];
         for (var i = 0; i < size(gaps); i += 1)
         {
@@ -371,10 +373,9 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             var nnDist = min(prevGap, nextGap);
             nnDists = append(nnDists, nnDist);
         }
-        var nnSum = 0;
-        for (var d in nnDists) nnSum += d;
-        var nnAvg = nnSum / size(nnDists);
-        var nnThresh = nnAvg * 3;
+        var sortedNN = sort(nnDists, function(a, b) { return a - b; });
+        var nnMedian = sortedNN[floor(size(sortedNN) / 2)];
+        var nnThresh = nnMedian * 10; // 极端孤立才删
         var filteredAngles = [];
         for (var i = 0; i < size(tipAngles); i += 1)
         {
@@ -407,7 +408,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             debug(context, p.point, DebugColor.RED);
 
         // 聚类数齿: 用自相关找角度周期 (比gap统计鲁棒: 不受每齿多顶点干扰)
-        // 把tip顶点按角度分桶(1°/桶), 计算自相关, 峰值位置=齿距
+        // 把tip顶点按角度分桶(1°/桶), 计算自相关, 第一个显著峰=齿距(基本周期)
         var NANG = 360;
         var angBins = [];
         for (var i = 0; i < NANG; i += 1)
@@ -416,22 +417,29 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             angBins[floor(a) % NANG] += 1;
 
         // 自相关: R(k) = sum_i angBins[i] * angBins[(i+k) % NANG]
-        // 齿距 = 第一个显著峰(排除k=0)的位置
-        var bestK = 0;
-        var bestR = 0;
-        var minTeeth = 6;
-        var maxTeeth = 200;
-        for (var k = minTeeth; k <= maxTeeth && k < NANG / 2; k += 1)
+        var autoCorr = [];
+        for (var k = 0; k < NANG / 2; k += 1)
         {
             var sum = 0;
             for (var i = 0; i < NANG; i += 1)
                 sum += angBins[i] * angBins[(i + k) % NANG];
-            // 归一化: 除以 (NANG - k) 补偿边界
-            var norm = sum; // 简单不归一化, 比较相对大小
-            if (norm > bestR)
+            autoCorr = append(autoCorr, sum);
+        }
+        // R(0) = 总点数, 用作归一化基准
+        var r0 = autoCorr[0];
+
+        // 找第一个显著局部峰(基本周期), 避免选到谐波
+        // 显著 = R(k) > R(0) * 0.3 且是局部极大值
+        var minTeeth = 6;
+        var bestK = 0;
+        for (var k = minTeeth; k < size(autoCorr) - 1; k += 1)
+        {
+            if (autoCorr[k] > r0 * 0.3 &&
+                autoCorr[k] >= autoCorr[k - 1] &&
+                autoCorr[k] >= autoCorr[k + 1])
             {
-                bestR = norm;
                 bestK = k;
+                break; // 取第一个峰 = 基本周期
             }
         }
         var teeth = (bestK > 0) ? bestK : 1;
