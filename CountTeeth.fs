@@ -406,32 +406,41 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         for (var p in tipPts)
             debug(context, p.point, DebugColor.RED);
 
-        // 聚类数齿: 用gap中位数估计齿距 (比maxGap鲁棒: maxGap会被半圈无数据的wrapGap污染)
-        // 同齿内gap小(齿尖顶点密集), 齿间gap大(=齿距). 用中位数*2估计齿距.
-        var sortedGaps = sort(gaps, function(a, b) { return a - b; });
-        var medianGap = sortedGaps[floor(size(sortedGaps) / 2)];
-        var maxGap = sortedGaps[size(sortedGaps) - 1];
-        // 齿距估计: 中位数gap * 2 (中位数=同齿内gap, 齿距≈2倍同齿内gap)
-        // 若中位数gap偏大(每齿1点), 直接用中位数作齿距
-        var estPitch = medianGap * 2;
-        // 用 maxGap 排除异常: 若 maxGap > estPitch*1.5, 说明有半圈无数据, estPitch 不可靠
-        // 此时用最小gap的两倍估计(最小gap=同齿内最近顶点间距)
-        var minGap = sortedGaps[0];
-        if (maxGap > estPitch * 1.5 && size(sortedGaps) > 4)
-            estPitch = minGap * 2;
-        var clusterThresh = estPitch * 0.75; // 阈值=0.75齿距, 同齿gap<阈值, 齿间gap>阈值
+        // 聚类数齿: 用自相关找角度周期 (比gap统计鲁棒: 不受每齿多顶点干扰)
+        // 把tip顶点按角度分桶(1°/桶), 计算自相关, 峰值位置=齿距
+        var NANG = 360;
+        var angBins = [];
+        for (var i = 0; i < NANG; i += 1)
+            angBins = append(angBins, 0);
+        for (var a in tipAngles)
+            angBins[floor(a) % NANG] += 1;
 
-        // 数gap > 阈值的次数 = 齿间分隔数 = 齿数
-        var teeth = 0;
-        for (var g in gaps)
+        // 自相关: R(k) = sum_i angBins[i] * angBins[(i+k) % NANG]
+        // 齿距 = 第一个显著峰(排除k=0)的位置
+        var bestK = 0;
+        var bestR = 0;
+        var minTeeth = 6;
+        var maxTeeth = 200;
+        for (var k = minTeeth; k <= maxTeeth && k < NANG / 2; k += 1)
         {
-            if (g > clusterThresh)
-                teeth += 1;
+            var sum = 0;
+            for (var i = 0; i < NANG; i += 1)
+                sum += angBins[i] * angBins[(i + k) % NANG];
+            // 归一化: 除以 (NANG - k) 补偿边界
+            var norm = sum; // 简单不归一化, 比较相对大小
+            if (norm > bestR)
+            {
+                bestR = norm;
+                bestK = k;
+            }
         }
+        var teeth = (bestK > 0) ? bestK : 1;
         if (teeth < 1)
             teeth = 1;
 
-        // 诊断: gap统计
+        // 诊断: gap统计 (用 teeth 估计齿距, 与自相关结果对比)
+        var estPitch = (teeth > 0) ? 360 / teeth : 360;
+        var clusterThresh = estPitch * 0.5;
         var smallGapCount = 0;
         var bigGapCount = 0;
         var bigGapSum = 0;
@@ -450,7 +459,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             bigGapAvg = bigGapSum / bigGapCount;
 
         // 校验: 大gap平均值应接近 360/teeth
-        var expectedGap = 360 / teeth;
+        var expectedGap = (teeth > 0) ? 360 / teeth : 0;
         var bigGaps = bigGapCount;
         var thresh = clusterThresh;
 
