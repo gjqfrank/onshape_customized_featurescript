@@ -322,60 +322,120 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         for (var p in tipPts)
             debug(context, p.point, DebugColor.RED);
 
-        // 聚类数齿: 用最大gap估计齿距, 再按齿距的一半聚类
-        // maxGap是最大的齿间gap, 360/maxGap给出齿数下界估计
-        // 阈值 = 估计齿距 * 0.5 (同齿内gap < 半齿距, 齿间gap > 半齿距)
-        var sortedGaps = sort(gaps, function(a, b) { return a - b; });
-        var maxGap = sortedGaps[size(sortedGaps) - 1];
-        var estTeeth = floor(360 / maxGap + 0.5);
-        if (estTeeth < 1) estTeeth = 1;
-        var estPitch = 360 / estTeeth;
-        var clusterThresh = estPitch * 0.5;
-
-        // 数gap > 阈值的次数 = 齿间分隔数 = 齿数
-        var teeth = 0;
-        for (var g in gaps)
+        // 聚类数齿: 角度自相关法
+        // 把齿尖顶点按1度分桶(360桶, 环形), 计算自相关 R(k) = sum(bin[i]*bin[i+k])
+        // 峰值位置k = 齿数 (角度分布的基本周期)
+        // 优势: 不受每齿顶点数影响 (2/3/4点都行), 不受矩形对称分布干扰
+        var ABINS = 360;
+        var angleBins = [];
+        for (var i = 0; i < ABINS; i += 1)
+            angleBins = append(angleBins, 0);
+        for (var p in tipPts)
         {
-            if (g > clusterThresh)
-                teeth += 1;
+            var a = floor(p.angle) % ABINS;
+            if (a < 0) a += ABINS;
+            angleBins[a] += 1;
         }
-        if (teeth < 1)
-            teeth = 1;
 
-        // 诊断: gap统计
+        // 自相关: R(k) = sum over i of bin[i] * bin[(i+k) % ABINS]
+        // k从6开始 (避免相邻齿内顶点的自相关峰), 到180
+        var bestK = 0;
+        var bestR = 0;
+        var minK = 6;
+        var maxK = 180;
+        var autocorrPeaks = []; // 记录所有局部峰值用于诊断
+        for (var k = minK; k <= maxK; k += 1)
+        {
+            var r = 0;
+            for (var i = 0; i < ABINS; i += 1)
+            {
+                if (angleBins[i] > 0 && angleBins[(i + k) % ABINS] > 0)
+                    r += angleBins[i] * angleBins[(i + k) % ABINS];
+            }
+            // 找第一个显著局部峰值 (>30% R(0)的峰)
+            // R(0) = sum(bin[i]^2)
+            if (k == minK)
+            {
+                var r0 = 0;
+                for (var i = 0; i < ABINS; i += 1)
+                    r0 += angleBins[i] * angleBins[i];
+                bestR = r0 * 0.3; // 阈值: 30% of R(0)
+            }
+            // 局部极大: 比左右邻居都大
+            var isPeak = false;
+            if (k > minK && k < maxK)
+            {
+                var rPrev = 0;
+                for (var i = 0; i < ABINS; i += 1)
+                    if (angleBins[i] > 0 && angleBins[(i + k - 1) % ABINS] > 0)
+                        rPrev += angleBins[i] * angleBins[(i + k - 1) % ABINS];
+                var rNext = 0;
+                for (var i = 0; i < ABINS; i += 1)
+                    if (angleBins[i] > 0 && angleBins[(i + k + 1) % ABINS] > 0)
+                        rNext += angleBins[i] * angleBins[(i + k + 1) % ABINS];
+                if (r > rPrev && r > rNext && r > bestR)
+                    isPeak = true;
+            }
+            if (isPeak && bestK == 0)
+            {
+                bestK = k;
+                bestR = r;
+            }
+        }
+
+        // 回退: 如果没找到峰值(顶点太少), 用maxGap法
+        var teeth = bestK;
+        var clusterThresh = 0;
         var smallGapCount = 0;
         var bigGapCount = 0;
         var bigGapSum = 0;
-        for (var g in gaps)
+        var maxGap = 0;
+        if (teeth < 1)
         {
-            if (g > clusterThresh)
+            var sortedGaps = sort(gaps, function(a, b) { return a - b; });
+            maxGap = sortedGaps[size(sortedGaps) - 1];
+            var estTeeth = floor(360 / maxGap + 0.5);
+            if (estTeeth < 1) estTeeth = 1;
+            var estPitch = 360 / estTeeth;
+            clusterThresh = estPitch * 0.5;
+            teeth = 0;
+            for (var g in gaps)
             {
-                bigGapCount += 1;
-                bigGapSum += g;
+                if (g > clusterThresh)
+                    teeth += 1;
             }
-            else
-                smallGapCount += 1;
+            if (teeth < 1) teeth = 1;
+            for (var g in gaps)
+            {
+                if (g > clusterThresh)
+                {
+                    bigGapCount += 1;
+                    bigGapSum += g;
+                }
+                else
+                    smallGapCount += 1;
+            }
+            // 修正: 矩形不共面排列时 small==big, 除以2
+            if (bigGapCount > 0 && smallGapCount > 0 &&
+                abs(bigGapCount - smallGapCount) <= max(1, floor(bigGapCount * 0.1)))
+            {
+                teeth = floor(teeth / 2);
+                if (teeth < 1) teeth = 1;
+            }
         }
         var bigGapAvg = 0;
         if (bigGapCount > 0)
             bigGapAvg = bigGapSum / bigGapCount;
 
-        // 修正: 矩形不共面排列时, 每齿4顶点对称分布, 齿间和齿内各2个gap,
-        // small gap数 == big gap数, 导致齿数翻倍. 此时除以2.
-        if (bigGapCount > 0 && smallGapCount > 0 &&
-            abs(bigGapCount - smallGapCount) <= max(1, floor(bigGapCount * 0.1)))
-        {
-            teeth = floor(teeth / 2);
-            if (teeth < 1) teeth = 1;
-        }
-
         // 校验: 大gap平均值应接近 360/teeth
-        var expectedGap = 360 / teeth;
+        var expectedGap = (teeth > 0) ? 360 / teeth : 0;
         var bigGaps = bigGapCount;
         var thresh = clusterThresh;
 
         // ---------- 6. 输出 -------------------------------------------------
+        var method = (bestK > 0) ? "Autocorr" : "MaxGap";
         var diagMsg = "Teeth: " ~ toString(teeth)
+            ~ " | Method: " ~ method
             ~ " | Tip vertices: " ~ toString(tipVertexCount)
             ~ " | TipCircleR: " ~ toString(tipCircleR)
             ~ " | AngleCover: " ~ toString(bestCover) ~ "/" ~ toString(NANGLE)
