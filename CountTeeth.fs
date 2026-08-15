@@ -228,7 +228,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         // 改用边采样的角度-半径曲线, 数"从低到高"上升沿 = 齿数.
         // 只保留半径 ≤ tipCircleR + cap的采样(排除凸缘), 按角度分桶取最大半径.
         var capR = tipCircleR + globalMaxVR * 0.02;
-        var NBUCKETS = 360;
+        var NBUCKETS = 720;
         var bucketMaxR = [];
         for (var i = 0; i < NBUCKETS; i += 1)
             bucketMaxR = append(bucketMaxR, 0 * meter);
@@ -244,31 +244,52 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 sampleMinR = sd.radius;
         }
 
-        // 填充空桶(线性插值)
-        var firstNonZero = -1;
+        // 线性插值填充空桶 (前向填充会把两个齿之间的低谷填平, 合并相邻齿)
+        // 找所有非空桶索引, 在相邻非空桶之间线性插值
+        var nonZeroIdxs = [];
         for (var i = 0; i < NBUCKETS; i += 1)
         {
-            if (bucketMaxR[i] > 0 * meter) { firstNonZero = i; break; }
+            if (bucketMaxR[i] > 0 * meter)
+                nonZeroIdxs = append(nonZeroIdxs, i);
         }
-        if (firstNonZero >= 0)
+
+        if (size(nonZeroIdxs) >= 2)
         {
-            var lastVal = bucketMaxR[firstNonZero];
-            for (var i = 0; i < firstNonZero; i += 1)
-                bucketMaxR[i] = lastVal;
-            for (var i = firstNonZero + 1; i < NBUCKETS; i += 1)
+            // 填充首尾环形 gap (从最后一个非空桶到第一个非空桶, 跨越0/360)
+            // 中间 gap 用线性插值
+            for (var k = 0; k < size(nonZeroIdxs) - 1; k += 1)
             {
-                if (bucketMaxR[i] > 0 * meter)
-                    lastVal = bucketMaxR[i];
-                else
-                    bucketMaxR[i] = lastVal;
+                var i0 = nonZeroIdxs[k];
+                var i1 = nonZeroIdxs[k + 1];
+                var r0 = bucketMaxR[i0];
+                var r1 = bucketMaxR[i1];
+                for (var i = i0 + 1; i < i1; i += 1)
+                {
+                    var t = (i - i0) / (i1 - i0);
+                    bucketMaxR[i] = r0 + (r1 - r0) * t;
+                }
+            }
+            // 首尾环形 gap: 从 nonZeroIdxs[last] 到 nonZeroIdxs[0] + NBUCKETS
+            var i0 = nonZeroIdxs[size(nonZeroIdxs) - 1];
+            var i1 = nonZeroIdxs[0] + NBUCKETS;
+            var r0 = bucketMaxR[nonZeroIdxs[size(nonZeroIdxs) - 1]];
+            var r1 = bucketMaxR[nonZeroIdxs[0]];
+            for (var i = i0 + 1; i < i1; i += 1)
+            {
+                var idx = i % NBUCKETS;
+                var t = (i - i0) / (i1 - i0);
+                bucketMaxR[idx] = r0 + (r1 - r0) * t;
             }
         }
 
         var edgeTeeth = 0;
-        if (firstNonZero >= 0 && sampleMinR < capR)
+        if (size(nonZeroIdxs) >= 2 && sampleMinR < capR)
         {
-            var highThresh = tipCircleR - globalMaxVR * 0.02;
-            var lowThresh = (tipCircleR + sampleMinR) / 2;
+            // 自适应阈值: 基于齿高 (tipCircleR - sampleMinR)
+            // highThresh = 齿根上方70%齿高, lowThresh = 齿根上方30%齿高
+            var amplitude = tipCircleR - sampleMinR;
+            var highThresh = sampleMinR + amplitude * 0.7;
+            var lowThresh = sampleMinR + amplitude * 0.3;
             var inHigh = false;
             for (var i = 0; i < NBUCKETS; i += 1)
             {
