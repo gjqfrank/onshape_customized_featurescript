@@ -194,166 +194,82 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             if (vp.radius < minVR) minVR = vp.radius;
         }
 
-        // 半径直方图: 分50桶, 找顶点数最多的桶 = 齿顶圆半径
+        // 半径直方图: 分50桶, 对每个桶统计顶点覆盖了多少个不同的角度桶(36个角度桶, 每10度)
+        // 齿尖顶点覆盖全圈(角度覆盖~36), 凸缘顶点覆盖少(凸缘是连续环但顶点少)
         var NBINS = 50;
-        var rHisto = [];
-        for (var i = 0; i < NBINS; i += 1)
-            rHisto = append(rHisto, 0);
+        var NANGLE = 36;
         var rRange = globalMaxVR - minVR;
         if (rRange == 0 * meter) rRange = 1 * meter;
+        var bucketAngleCover = []; // 每个半径桶的角度覆盖数
+        var bucketAngleSet = []; // 每个半径桶的角度集合(用二维数组)
+        for (var i = 0; i < NBINS; i += 1)
+        {
+            bucketAngleCover = append(bucketAngleCover, 0);
+            var aSet = [];
+            for (var j = 0; j < NANGLE; j += 1) aSet = append(aSet, false);
+            bucketAngleSet = append(bucketAngleSet, aSet);
+        }
         for (var vp in vertexPoints)
         {
             var frac = (vp.radius - minVR) / rRange;
             if (frac < 0) frac = 0;
             if (frac > 0.999) frac = 0.999;
-            rHisto[floor(frac * NBINS)] += 1;
-        }
-        // 找齿顶圆半径: 从最大半径开始, 找第一个顶点数 >= 8 的桶
-        // (齿尖是最大半径, 每齿至少1~2个顶点, 8T以上齿尖顶点数 >= 8;
-        //  凸缘/字样顶点少 < 8, 不会误选)
-        var bestBin = 0;
-        for (var i = NBINS - 1; i >= 0; i -= 1)
-        {
-            var binR = minVR + rRange * (i + 0.5) / NBINS;
-            if (binR > globalMaxVR * 0.5 && rHisto[i] >= 8)
+            var bIdx = floor(frac * NBINS);
+            var binR = minVR + rRange * (bIdx + 0.5) / NBINS;
+            if (binR > globalMaxVR * 0.5)
             {
+                var d = vp.point - center;
+                var proj = d - dot(d, axisDir) * axisDir;
+                var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
+                if (angle < 0) angle += 360;
+                var aIdx = floor(angle / 360 * NANGLE) % NANGLE;
+                if (!bucketAngleSet[bIdx][aIdx])
+                {
+                    bucketAngleSet[bIdx][aIdx] = true;
+                    bucketAngleCover[bIdx] += 1;
+                }
+            }
+        }
+        // 选角度覆盖最广的桶 = 齿顶圆半径(齿尖顶点覆盖全圈)
+        var bestBin = 0;
+        var bestCover = 0;
+        for (var i = 0; i < NBINS; i += 1)
+        {
+            if (bucketAngleCover[i] > bestCover)
+            {
+                bestCover = bucketAngleCover[i];
                 bestBin = i;
-                break;
             }
         }
         var tipCircleR = minVR + rRange * (bestBin + 0.5) / NBINS;
 
-        // ---------- 5b. 边采样峰值计数(主方法) -----------------------------
-        // 顶点聚类在平顶齿(每齿多顶点均匀分布)时会误判(如24T→48T).
-        // 改用边采样的角度-半径曲线, 数"从低到高"上升沿 = 齿数.
-        // 只保留半径 ≤ tipCircleR + cap的采样(排除凸缘), 按角度分桶取最大半径.
-        var capR = tipCircleR + globalMaxVR * 0.02;
-        var NBUCKETS = 720;
-        var bucketMaxR = [];
-        for (var i = 0; i < NBUCKETS; i += 1)
-            bucketMaxR = append(bucketMaxR, 0 * meter);
-
-        // 同时收集所有有效半径用于算中位数齿根(比min鲁棒, 排除凸缘/字样干扰)
-        var allValidR = [];
-        for (var sd in allSampleData)
-        {
-            if (sd.radius > capR) continue;
-            var bIdx = floor((sd.angle / (2 * PI) * NBUCKETS) / radian) % NBUCKETS;
-            if (sd.radius > bucketMaxR[bIdx])
-                bucketMaxR[bIdx] = sd.radius;
-            allValidR = append(allValidR, sd.radius);
-        }
-
-        // 中位数齿根半径 (比min鲁棒: 不被单个异常低点拉低)
-        var sortedR = sort(allValidR, function(a, b) { return (a - b) / meter; });
-        var rootR = (size(sortedR) > 0) ? sortedR[floor(size(sortedR) / 2)] : tipCircleR * 0.9;
-        var sampleMinR = (size(sortedR) > 0) ? sortedR[0] : rootR;
-
-        var nonZeroIdxs = [];
-        for (var i = 0; i < NBUCKETS; i += 1)
-        {
-            if (bucketMaxR[i] > 0 * meter)
-                nonZeroIdxs = append(nonZeroIdxs, i);
-        }
-
-        var edgeTeeth = 0;
-        var edgeHighThresh = tipCircleR;
-        var edgeLowThresh = rootR;
-        if (size(nonZeroIdxs) >= 2 && rootR < tipCircleR)
-        {
-            // 滞回阈值: high=齿根+50%齿高, low=齿根+10%齿高 (较宽滞回, 避免噪声抖动)
-            var amplitude = tipCircleR - rootR;
-            edgeHighThresh = rootR + amplitude * 0.5;
-            edgeLowThresh = rootR + amplitude * 0.1;
-            var inHigh = false;
-            // 用非空桶序列(环形)数上升沿, 跳过空桶(不插值, 避免填平低谷合并齿)
-            for (var k = 0; k < size(nonZeroIdxs); k += 1)
-            {
-                var i = nonZeroIdxs[k];
-                if (!inHigh && bucketMaxR[i] >= edgeHighThresh)
-                {
-                    inHigh = true;
-                    edgeTeeth += 1;
-                }
-                else if (inHigh && bucketMaxR[i] < edgeLowThresh)
-                    inHigh = false;
-            }
-            // 首尾同齿修正: 仅当首尾非空桶相邻(跨度<3桶)时才减1, 否则可能是半圈无数据
-            var firstIdx = nonZeroIdxs[0];
-            var lastIdx = nonZeroIdxs[size(nonZeroIdxs) - 1];
-            var wrapSpan = (firstIdx + NBUCKETS - lastIdx) % NBUCKETS;
-            if (edgeTeeth > 1 && wrapSpan <= 3 &&
-                bucketMaxR[firstIdx] >= edgeHighThresh &&
-                bucketMaxR[lastIdx] >= edgeHighThresh)
-                edgeTeeth -= 1;
-
-            // 半圈修正: 如果非空桶跨度 < 540°(3/4圈), 按角度比例放大
-            // (采样只覆盖部分角度时, 实际齿数 = 计数 * 360 / 覆盖角度)
-            var angleSpan = (lastIdx - firstIdx + NBUCKETS) % NBUCKETS;
-            if (angleSpan > 0 && angleSpan < NBUCKETS * 0.9)
-            {
-                var coverageRatio = angleSpan / NBUCKETS;
-                if (coverageRatio > 0.1 && coverageRatio < 0.95)
-                    edgeTeeth = round(edgeTeeth / coverageRatio);
-            }
-        }
-
-        // 齿尖顶点: radius在tipCircleR附近
-        // 容差: 齿高的30% (宽松, 保证不漏齿; 字样顶点半径远小于齿尖, 不会混入)
-        // 或 globalMaxVR*5%, 取较大者确保覆盖齿尖圆角半径波动
-        var tipTol = max(globalMaxVR * 0.05, (globalMaxVR - rootR) * 0.3);
-        tipTol = min(tipTol, globalMaxVR * 0.1); // 上限10%避免混入齿根顶点
+        // 齿尖顶点: radius在tipCircleR附近(±2%全局maxR)
+        var tipTol = globalMaxVR * 0.02;
+        var tipLo = tipCircleR - tipTol;
+        var tipHi = tipCircleR + tipTol;
         var tipVertexCount = 0;
-        // 先收集所有半径匹配的齿尖点(带角度+轴向)
-        var tipPts = [];
+        var tipPts = []; // 收集齿尖点(带角度)
+        var tipAngles = []; // 角度(度)
         for (var vp in vertexPoints)
         {
-            if (abs(vp.radius - tipCircleR) < tipTol)
+            if (vp.radius >= tipLo && vp.radius <= tipHi)
             {
                 var d = vp.point - center;
                 var proj = d - dot(d, axisDir) * axisDir;
                 var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
                 if (angle < 0)
                     angle += 360;
-                tipPts = append(tipPts, { "angle" : angle, "axial" : vp.axial, "point" : vp.point });
+                tipAngles = append(tipAngles, angle);
+                tipPts = append(tipPts, { "angle" : angle, "point" : vp.point });
             }
         }
 
-        // 对称性筛选: 中位面在 ax=0, 每个点需在对称位置 ax'≈-ax (角度相同)有匹配点
-        // 容差: 轴向 2mm, 角度 3度. 无对称匹配的点(字样/单侧凸缘)被排除.
-        // 若筛选后点太少(对称性不明显的零件), 回退到无对称筛选.
-        var axTolSym = 0.002 * meter;
-        var angTolSym = 3.0;
-        var symTipPts = [];
-        for (var i = 0; i < size(tipPts); i += 1)
-        {
-            var p = tipPts[i];
-            var hasSym = false;
-            for (var j = 0; j < size(tipPts); j += 1)
-            {
-                if (j == i) continue;
-                var q = tipPts[j];
-                if (abs(q.axial + p.axial) < axTolSym && abs(q.angle - p.angle) < angTolSym)
-                {
-                    hasSym = true;
-                    break;
-                }
-            }
-            if (hasSym)
-                symTipPts = append(symTipPts, p);
-        }
-        // 回退: 对称筛选后点太少则保留原 tipPts (有些零件齿不对称)
-        if (size(symTipPts) >= 3)
-            tipPts = symTipPts;
+        if (size(tipAngles) < 3)
+            throw "Too few tip vertices (" ~ toString(size(tipAngles)) ~ ") for clustering. tipCircleR: " ~ toString(tipCircleR);
 
-        if (size(tipPts) < 3)
-            throw "Too few tip vertices (" ~ toString(size(tipPts)) ~ ") for clustering. tipCircleR: " ~ toString(tipCircleR);
-
-        // 按角度排序 tipPts (保持 tipAngles 与 tipPts 索引一致)
+        // 按角度排序
+        tipAngles = sort(tipAngles, function(a, b) { return a - b; });
         tipPts = sort(tipPts, function(a, b) { return a.angle - b.angle; });
-        var tipAngles = []; // 角度(度)
-        for (var p in tipPts)
-            tipAngles = append(tipAngles, p.angle);
 
         // 计算所有相邻角度差(含wrap-around)
         var gaps = [];
@@ -363,8 +279,9 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         var wrapGap = (360 - tipAngles[size(tipAngles) - 1]) + tipAngles[0];
         gaps = append(gaps, wrapGap);
 
-        // 过滤孤立顶点: 只删极端孤立点(最近邻居 > 中位nnDist的10倍)
-        // 不用3倍平均值(缺一齿时相邻齿nnDist变大, 会被误删, 连锁丢失更多齿)
+        // 过滤孤立顶点(字样/噪点): 计算每个顶点到最近邻居的角度距离,
+        // 如果某顶点的最近邻居距离 > 平均距离的3倍, 认为是孤立点, 移除.
+        // 真齿尖顶点有邻居(同齿其他顶点或相邻齿), 字样顶点孤立.
         var nnDists = [];
         for (var i = 0; i < size(gaps); i += 1)
         {
@@ -373,23 +290,21 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             var nnDist = min(prevGap, nextGap);
             nnDists = append(nnDists, nnDist);
         }
-        var sortedNN = sort(nnDists, function(a, b) { return a - b; });
-        var nnMedian = sortedNN[floor(size(sortedNN) / 2)];
-        var nnThresh = nnMedian * 10; // 极端孤立才删
+        var nnSum = 0;
+        for (var d in nnDists) nnSum += d;
+        var nnAvg = nnSum / size(nnDists);
+        var nnThresh = nnAvg * 3;
         var filteredAngles = [];
+        var filteredTipPts = [];
         for (var i = 0; i < size(tipAngles); i += 1)
         {
             if (nnDists[i] <= nnThresh)
+            {
                 filteredAngles = append(filteredAngles, tipAngles[i]);
+                filteredTipPts = append(filteredTipPts, tipPts[i]);
+            }
         }
         tipAngles = filteredAngles;
-        // 同步过滤 tipPts (保留 isolation filter 通过的点)
-        var filteredTipPts = [];
-        for (var i = 0; i < size(tipPts); i += 1)
-        {
-            if (nnDists[i] <= nnThresh)
-                filteredTipPts = append(filteredTipPts, tipPts[i]);
-        }
         tipPts = filteredTipPts;
         tipVertexCount = size(tipAngles);
 
@@ -407,48 +322,27 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         for (var p in tipPts)
             debug(context, p.point, DebugColor.RED);
 
-        // 聚类数齿: 用自相关找角度周期 (比gap统计鲁棒: 不受每齿多顶点干扰)
-        // 把tip顶点按角度分桶(1°/桶), 计算自相关, 第一个显著峰=齿距(基本周期)
-        var NANG = 360;
-        var angBins = [];
-        for (var i = 0; i < NANG; i += 1)
-            angBins = append(angBins, 0);
-        for (var a in tipAngles)
-            angBins[floor(a) % NANG] += 1;
+        // 聚类数齿: 用最大gap估计齿距, 再按齿距的一半聚类
+        // maxGap是最大的齿间gap, 360/maxGap给出齿数下界估计
+        // 阈值 = 估计齿距 * 0.5 (同齿内gap < 半齿距, 齿间gap > 半齿距)
+        var sortedGaps = sort(gaps, function(a, b) { return a - b; });
+        var maxGap = sortedGaps[size(sortedGaps) - 1];
+        var estTeeth = floor(360 / maxGap + 0.5);
+        if (estTeeth < 1) estTeeth = 1;
+        var estPitch = 360 / estTeeth;
+        var clusterThresh = estPitch * 0.5;
 
-        // 自相关: R(k) = sum_i angBins[i] * angBins[(i+k) % NANG]
-        var autoCorr = [];
-        for (var k = 0; k < NANG / 2; k += 1)
+        // 数gap > 阈值的次数 = 齿间分隔数 = 齿数
+        var teeth = 0;
+        for (var g in gaps)
         {
-            var sum = 0;
-            for (var i = 0; i < NANG; i += 1)
-                sum += angBins[i] * angBins[(i + k) % NANG];
-            autoCorr = append(autoCorr, sum);
+            if (g > clusterThresh)
+                teeth += 1;
         }
-        // R(0) = 总点数, 用作归一化基准
-        var r0 = autoCorr[0];
-
-        // 找第一个显著局部峰(基本周期), 避免选到谐波
-        // 显著 = R(k) > R(0) * 0.3 且是局部极大值
-        var minTeeth = 6;
-        var bestK = 0;
-        for (var k = minTeeth; k < size(autoCorr) - 1; k += 1)
-        {
-            if (autoCorr[k] > r0 * 0.3 &&
-                autoCorr[k] >= autoCorr[k - 1] &&
-                autoCorr[k] >= autoCorr[k + 1])
-            {
-                bestK = k;
-                break; // 取第一个峰 = 基本周期
-            }
-        }
-        var teeth = (bestK > 0) ? bestK : 1;
         if (teeth < 1)
             teeth = 1;
 
-        // 诊断: gap统计 (用 teeth 估计齿距, 与自相关结果对比)
-        var estPitch = (teeth > 0) ? 360 / teeth : 360;
-        var clusterThresh = estPitch * 0.5;
+        // 诊断: gap统计
         var smallGapCount = 0;
         var bigGapCount = 0;
         var bigGapSum = 0;
@@ -467,27 +361,15 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             bigGapAvg = bigGapSum / bigGapCount;
 
         // 校验: 大gap平均值应接近 360/teeth
-        var expectedGap = (teeth > 0) ? 360 / teeth : 0;
+        var expectedGap = 360 / teeth;
         var bigGaps = bigGapCount;
         var thresh = clusterThresh;
 
-        // ---------- 5c. 选择最终齿数 ----------------------------------------
-        // 优先用边采样峰值计数(对平顶齿更可靠), 回退到顶点聚类
-        var vertexTeeth = teeth;
-        if (edgeTeeth > 0)
-            teeth = edgeTeeth;
-
         // ---------- 6. 输出 -------------------------------------------------
         var diagMsg = "Teeth: " ~ toString(teeth)
-            ~ " | EdgeTeeth: " ~ toString(edgeTeeth)
-            ~ " | VertexTeeth: " ~ toString(vertexTeeth)
             ~ " | Tip vertices: " ~ toString(tipVertexCount)
             ~ " | TipCircleR: " ~ toString(tipCircleR)
-            ~ " | RootR: " ~ toString(rootR)
-            ~ " | EdgeHigh: " ~ toString(edgeHighThresh)
-            ~ " | EdgeLow: " ~ toString(edgeLowThresh)
-            ~ " | NonZeroBuckets: " ~ toString(size(nonZeroIdxs))
-            ~ " | ValidSamples: " ~ toString(size(allValidR))
+            ~ " | AngleCover: " ~ toString(bestCover) ~ "/" ~ toString(NANGLE)
             ~ " | GlobalMaxVR: " ~ toString(globalMaxVR)
             ~ " | BigGaps: " ~ toString(bigGaps)
             ~ " | SmallGaps: " ~ toString(smallGapCount)
