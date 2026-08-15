@@ -210,8 +210,70 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
         var tipCircleR = minVR + rRange * (bestBin + 0.5) / NBINS;
 
-        // 齿尖顶点: radius在tipCircleR附近(±2%全局maxR, 收紧容差排除字样顶点)
-        var tipTol = globalMaxVR * 0.02;
+        // ---------- 5b. 边采样峰值计数(主方法) -----------------------------
+        // 顶点聚类在平顶齿(每齿多顶点均匀分布)时会误判(如24T→48T).
+        // 改用边采样的角度-半径曲线, 数"从低到高"上升沿 = 齿数.
+        // 只保留半径 ≤ tipCircleR + cap的采样(排除凸缘), 按角度分桶取最大半径.
+        var capR = tipCircleR + globalMaxVR * 0.02;
+        var NBUCKETS = 360;
+        var bucketMaxR = [];
+        for (var i = 0; i < NBUCKETS; i += 1)
+            bucketMaxR = append(bucketMaxR, 0 * meter);
+
+        var sampleMinR = capR;
+        for (var sd in allSampleData)
+        {
+            if (sd.radius > capR) continue;
+            var bIdx = floor(sd.angle / (2 * PI) * NBUCKETS) % NBUCKETS;
+            if (sd.radius > bucketMaxR[bIdx])
+                bucketMaxR[bIdx] = sd.radius;
+            if (sd.radius > 0 * meter && sd.radius < sampleMinR)
+                sampleMinR = sd.radius;
+        }
+
+        // 填充空桶(线性插值)
+        var firstNonZero = -1;
+        for (var i = 0; i < NBUCKETS; i += 1)
+        {
+            if (bucketMaxR[i] > 0 * meter) { firstNonZero = i; break; }
+        }
+        if (firstNonZero >= 0)
+        {
+            var lastVal = bucketMaxR[firstNonZero];
+            for (var i = 0; i < firstNonZero; i += 1)
+                bucketMaxR[i] = lastVal;
+            for (var i = firstNonZero + 1; i < NBUCKETS; i += 1)
+            {
+                if (bucketMaxR[i] > 0 * meter)
+                    lastVal = bucketMaxR[i];
+                else
+                    bucketMaxR[i] = lastVal;
+            }
+        }
+
+        var edgeTeeth = 0;
+        if (firstNonZero >= 0 && sampleMinR < capR)
+        {
+            var highThresh = tipCircleR - globalMaxVR * 0.02;
+            var lowThresh = (tipCircleR + sampleMinR) / 2;
+            var inHigh = false;
+            for (var i = 0; i < NBUCKETS; i += 1)
+            {
+                if (!inHigh && bucketMaxR[i] >= highThresh)
+                {
+                    inHigh = true;
+                    edgeTeeth += 1;
+                }
+                else if (inHigh && bucketMaxR[i] < lowThresh)
+                    inHigh = false;
+            }
+            // 首尾同齿修正: 如果首尾都在high, 减1
+            if (edgeTeeth > 1 && bucketMaxR[0] >= highThresh && bucketMaxR[NBUCKETS - 1] >= highThresh)
+                edgeTeeth -= 1;
+        }
+
+        // 齿尖顶点: radius在tipCircleR附近(收紧容差: 直方图桶宽的70%, 排除字样顶点)
+        var tipTol = min(globalMaxVR * 0.02, rRange / NBINS * 0.7);
         var tipVertexCount = 0;
         var tipAngles = []; // 角度(度)
         for (var vp in vertexPoints)
@@ -339,8 +401,16 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         var bigGaps = bigGapCount;
         var thresh = clusterThresh;
 
+        // ---------- 5c. 选择最终齿数 ----------------------------------------
+        // 优先用边采样峰值计数(对平顶齿更可靠), 回退到顶点聚类
+        var vertexTeeth = teeth;
+        if (edgeTeeth > 0)
+            teeth = edgeTeeth;
+
         // ---------- 6. 输出 -------------------------------------------------
         var diagMsg = "Teeth: " ~ toString(teeth)
+            ~ " | EdgeTeeth: " ~ toString(edgeTeeth)
+            ~ " | VertexTeeth: " ~ toString(vertexTeeth)
             ~ " | Tip vertices: " ~ toString(tipVertexCount)
             ~ " | TipCircleR: " ~ toString(tipCircleR)
             ~ " | GlobalMaxVR: " ~ toString(globalMaxVR)
