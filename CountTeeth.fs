@@ -99,8 +99,12 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         // ---------- 2. 几何中心 ---------------------------------------------
         var bbox = evBox3d(context, { "topology" : definition.part });
         var bboxCenter = (bbox.minCorner + bbox.maxCorner) / 2;
-        // 投影到轴上
-        var centerOnAxis = axisOrigin + dot(bboxCenter - axisOrigin, axisDir) * axisDir;
+        // 修正轴 origin 的径向坐标: 用 bbox 中心的径向坐标替代
+        // evAxis 返回的圆柱面轴 origin 可能偏离真正回转中心(如齿槽圆弧面),
+        // 对称零件 bbox 中心 ≈ 回转中心, 更稳健
+        var radialOffset = (bboxCenter - axisOrigin) - dot(bboxCenter - axisOrigin, axisDir) * axisDir;
+        var center = axisOrigin + radialOffset; // 径向(XZ)=bboxCenter, 轴向(Y)=axisOrigin
+        var centerOnAxis = center + dot(bboxCenter - center, axisDir) * axisDir;
 
         // ---------- 3. 标识轴和中心 -----------------------------------------
         // 黄色画轴(用线)和中心点
@@ -136,8 +140,8 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 try silent
                 {
                     var pt = evEdgeTangentLine(context, { "edge" : edge, "parameter" : t }).origin;
-                    var r = radialDistance(pt, axisOrigin, axisDir);
-                    var d = pt - axisOrigin;
+                    var r = radialDistance(pt, center, axisDir);
+                    var d = pt - center;
                     var proj = d - dot(d, axisDir) * axisDir;
                     var angle = atan2(dot(proj, refV), dot(proj, refU));
                     if (angle < 0)
@@ -164,7 +168,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             try silent
             {
                 var pt = evVertexPoint(context, { "vertex" : v });
-                var r = radialDistance(pt, axisOrigin, axisDir);
+                var r = radialDistance(pt, center, axisDir);
                 vertexPoints = append(vertexPoints, { "point" : pt, "radius" : r });
             }
         }
@@ -214,7 +218,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         {
             if (abs(vp.radius - tipCircleR) < tipTol)
             {
-                var d = vp.point - axisOrigin;
+                var d = vp.point - center;
                 var proj = d - dot(d, axisDir) * axisDir;
                 var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
                 if (angle < 0)
@@ -276,7 +280,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         {
             if (abs(vp.radius - tipCircleR) < tipTol)
             {
-                var d = vp.point - axisOrigin;
+                var d = vp.point - center;
                 var proj = d - dot(d, axisDir) * axisDir;
                 var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
                 if (angle < 0)
@@ -345,6 +349,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             ~ " | Thresh: " ~ toString(round(thresh * 10) / 10)
             ~ " | BigGapAvg: " ~ toString(round(bigGapAvg * 10) / 10)
             ~ " | ExpectedGap: " ~ toString(round(expectedGap * 10) / 10)
+            ~ " | Center: " ~ toString(centerOnAxis)
             ~ " | Edges: " ~ toString(size(allEdges));
 
         reportFeatureInfo(context, id, diagMsg);
