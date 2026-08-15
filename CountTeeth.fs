@@ -233,19 +233,22 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         for (var i = 0; i < NBUCKETS; i += 1)
             bucketMaxR = append(bucketMaxR, 0 * meter);
 
-        var sampleMinR = capR;
+        // 同时收集所有有效半径用于算中位数齿根(比min鲁棒, 排除凸缘/字样干扰)
+        var allValidR = [];
         for (var sd in allSampleData)
         {
             if (sd.radius > capR) continue;
             var bIdx = floor((sd.angle / (2 * PI) * NBUCKETS) / radian) % NBUCKETS;
             if (sd.radius > bucketMaxR[bIdx])
                 bucketMaxR[bIdx] = sd.radius;
-            if (sd.radius > 0 * meter && sd.radius < sampleMinR)
-                sampleMinR = sd.radius;
+            allValidR = append(allValidR, sd.radius);
         }
 
-        // 线性插值填充空桶 (前向填充会把两个齿之间的低谷填平, 合并相邻齿)
-        // 找所有非空桶索引, 在相邻非空桶之间线性插值
+        // 中位数齿根半径 (比min鲁棒: 不被单个异常低点拉低)
+        var sortedR = sort(allValidR, function(a, b) { return (a - b) / meter; });
+        var rootR = (size(sortedR) > 0) ? sortedR[floor(size(sortedR) / 2)] : tipCircleR * 0.9;
+        var sampleMinR = (size(sortedR) > 0) ? sortedR[0] : rootR;
+
         var nonZeroIdxs = [];
         for (var i = 0; i < NBUCKETS; i += 1)
         {
@@ -253,56 +256,32 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 nonZeroIdxs = append(nonZeroIdxs, i);
         }
 
-        if (size(nonZeroIdxs) >= 2)
-        {
-            // 填充首尾环形 gap (从最后一个非空桶到第一个非空桶, 跨越0/360)
-            // 中间 gap 用线性插值
-            for (var k = 0; k < size(nonZeroIdxs) - 1; k += 1)
-            {
-                var i0 = nonZeroIdxs[k];
-                var i1 = nonZeroIdxs[k + 1];
-                var r0 = bucketMaxR[i0];
-                var r1 = bucketMaxR[i1];
-                for (var i = i0 + 1; i < i1; i += 1)
-                {
-                    var t = (i - i0) / (i1 - i0);
-                    bucketMaxR[i] = r0 + (r1 - r0) * t;
-                }
-            }
-            // 首尾环形 gap: 从 nonZeroIdxs[last] 到 nonZeroIdxs[0] + NBUCKETS
-            var i0 = nonZeroIdxs[size(nonZeroIdxs) - 1];
-            var i1 = nonZeroIdxs[0] + NBUCKETS;
-            var r0 = bucketMaxR[nonZeroIdxs[size(nonZeroIdxs) - 1]];
-            var r1 = bucketMaxR[nonZeroIdxs[0]];
-            for (var i = i0 + 1; i < i1; i += 1)
-            {
-                var idx = i % NBUCKETS;
-                var t = (i - i0) / (i1 - i0);
-                bucketMaxR[idx] = r0 + (r1 - r0) * t;
-            }
-        }
-
         var edgeTeeth = 0;
-        if (size(nonZeroIdxs) >= 2 && sampleMinR < capR)
+        var edgeHighThresh = tipCircleR;
+        var edgeLowThresh = rootR;
+        if (size(nonZeroIdxs) >= 2 && rootR < tipCircleR)
         {
-            // 自适应阈值: 基于齿高 (tipCircleR - sampleMinR)
-            // highThresh = 齿根上方70%齿高, lowThresh = 齿根上方30%齿高
-            var amplitude = tipCircleR - sampleMinR;
-            var highThresh = sampleMinR + amplitude * 0.7;
-            var lowThresh = sampleMinR + amplitude * 0.3;
+            // 滞回阈值: high=齿根+50%齿高, low=齿根+10%齿高 (较宽滞回, 避免噪声抖动)
+            var amplitude = tipCircleR - rootR;
+            edgeHighThresh = rootR + amplitude * 0.5;
+            edgeLowThresh = rootR + amplitude * 0.1;
             var inHigh = false;
-            for (var i = 0; i < NBUCKETS; i += 1)
+            // 用非空桶序列(环形)数上升沿, 跳过空桶(不插值, 避免填平低谷合并齿)
+            for (var k = 0; k < size(nonZeroIdxs); k += 1)
             {
-                if (!inHigh && bucketMaxR[i] >= highThresh)
+                var i = nonZeroIdxs[k];
+                if (!inHigh && bucketMaxR[i] >= edgeHighThresh)
                 {
                     inHigh = true;
                     edgeTeeth += 1;
                 }
-                else if (inHigh && bucketMaxR[i] < lowThresh)
+                else if (inHigh && bucketMaxR[i] < edgeLowThresh)
                     inHigh = false;
             }
-            // 首尾同齿修正: 如果首尾都在high, 减1
-            if (edgeTeeth > 1 && bucketMaxR[0] >= highThresh && bucketMaxR[NBUCKETS - 1] >= highThresh)
+            // 首尾同齿修正: 如果首尾非空桶都在high, 减1
+            if (edgeTeeth > 1 &&
+                bucketMaxR[nonZeroIdxs[0]] >= edgeHighThresh &&
+                bucketMaxR[nonZeroIdxs[size(nonZeroIdxs) - 1]] >= edgeHighThresh)
                 edgeTeeth -= 1;
         }
 
@@ -469,6 +448,11 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             ~ " | VertexTeeth: " ~ toString(vertexTeeth)
             ~ " | Tip vertices: " ~ toString(tipVertexCount)
             ~ " | TipCircleR: " ~ toString(tipCircleR)
+            ~ " | RootR: " ~ toString(rootR)
+            ~ " | EdgeHigh: " ~ toString(edgeHighThresh)
+            ~ " | EdgeLow: " ~ toString(edgeLowThresh)
+            ~ " | NonZeroBuckets: " ~ toString(size(nonZeroIdxs))
+            ~ " | ValidSamples: " ~ toString(size(allValidR))
             ~ " | GlobalMaxVR: " ~ toString(globalMaxVR)
             ~ " | BigGaps: " ~ toString(bigGaps)
             ~ " | SmallGaps: " ~ toString(smallGapCount)
