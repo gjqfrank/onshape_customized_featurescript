@@ -225,16 +225,16 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 bucketAngleSet[bIdx][aIdx] = true;
             }
         }
-        // 滑动窗口: 从最大半径开始, 合并相邻 W 个桶, 找角度覆盖最广的窗口
-        // 窗口宽度 W = 5 (覆盖齿尖矩形内外侧顶点的半径差)
-        // 只在半径 > 80% maxR 的范围内找 (排除齿根/凸缘)
+        // 滑动窗口: 从最大半径往下找第一个角度覆盖足够的窗口
+        // 矩形与轴向平行: 4顶点半径相同(都在齿尖圆), 应在最大半径桶
+        // 齿尖4点/齿, 齿距>10度桶宽时每齿集中在1个角度桶, 覆盖~N/36 (非36)
+        // 所以从最大半径往下找第一个覆盖>=12/36(1/3圈)的窗口 = 最外侧齿尖层
         var W = 5;
         var bestWinStart = NBINS - W;
         var bestCover = 0;
-        var minBinForTip = floor(NBINS * 0.8); // 只在顶部20%半径范围找
-        for (var i = minBinForTip; i <= NBINS - W; i += 1)
+        var minCover = 12; // 至少1/3圈
+        for (var i = NBINS - W; i >= floor(NBINS * 0.5); i -= 1)
         {
-            // 合并窗口内 W 个桶的角度集合
             var covered = 0;
             for (var a = 0; a < NANGLE; a += 1)
             {
@@ -245,10 +245,33 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 }
                 if (has) covered += 1;
             }
-            if (covered > bestCover)
+            if (covered >= minCover)
             {
-                bestCover = covered;
                 bestWinStart = i;
+                bestCover = covered;
+                break;
+            }
+        }
+        // 回退: 找覆盖最广的
+        if (bestCover == 0)
+        {
+            for (var i = floor(NBINS * 0.5); i <= NBINS - W; i += 1)
+            {
+                var covered = 0;
+                for (var a = 0; a < NANGLE; a += 1)
+                {
+                    var has = false;
+                    for (var b = i; b < i + W; b += 1)
+                    {
+                        if (bucketAngleSet[b][a]) { has = true; break; }
+                    }
+                    if (has) covered += 1;
+                }
+                if (covered > bestCover)
+                {
+                    bestCover = covered;
+                    bestWinStart = i;
+                }
             }
         }
         // tipCircleR = 窗口中心半径 (覆盖齿尖矩形全部顶点)
