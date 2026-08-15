@@ -194,17 +194,16 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             if (vp.radius < minVR) minVR = vp.radius;
         }
 
-        // 半径直方图: 分50桶, 对每个桶统计顶点覆盖了多少个不同的角度桶(36个角度桶, 每10度)
-        // 齿尖顶点覆盖全圈(角度覆盖~36), 凸缘顶点覆盖少(凸缘是连续环但顶点少)
-        var NBINS = 50;
+        // 半径直方图: 分100桶(更细), 对每个桶统计顶点覆盖了多少个不同的角度桶(36个角度桶, 每10度)
+        // 齿尖矩形4顶点可能分到相邻2-3个桶(外侧2点半径最大, 内侧2点略小),
+        // 用滑动窗口合并相邻桶的角度覆盖, 找覆盖最广的连续区间 = 齿尖层
+        var NBINS = 100;
         var NANGLE = 36;
         var rRange = globalMaxVR - minVR;
         if (rRange == 0 * meter) rRange = 1 * meter;
-        var bucketAngleCover = []; // 每个半径桶的角度覆盖数
-        var bucketAngleSet = []; // 每个半径桶的角度集合(用二维数组)
+        var bucketAngleSet = []; // 每个半径桶的角度集合
         for (var i = 0; i < NBINS; i += 1)
         {
-            bucketAngleCover = append(bucketAngleCover, 0);
             var aSet = [];
             for (var j = 0; j < NANGLE; j += 1) aSet = append(aSet, false);
             bucketAngleSet = append(bucketAngleSet, aSet);
@@ -223,44 +222,39 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
                 if (angle < 0) angle += 360;
                 var aIdx = floor(angle / 360 * NANGLE) % NANGLE;
-                if (!bucketAngleSet[bIdx][aIdx])
-                {
-                    bucketAngleSet[bIdx][aIdx] = true;
-                    bucketAngleCover[bIdx] += 1;
-                }
+                bucketAngleSet[bIdx][aIdx] = true;
             }
         }
-        // 选齿顶圆半径: 从最大半径开始往下找, 第一个角度覆盖 >= 24/36 (2/3圈) 的桶
-        // 齿尖顶点覆盖全圈(>=36), 齿根/凸缘/字样覆盖少或不连续
-        // 从最大半径往下找确保选到的是齿尖(最高点), 而非齿根或中间半径
-        var bestBin = 0;
+        // 滑动窗口: 从最大半径开始, 合并相邻 W 个桶, 找角度覆盖最广的窗口
+        // 窗口宽度 W = 5 (覆盖齿尖矩形内外侧顶点的半径差)
+        // 只在半径 > 80% maxR 的范围内找 (排除齿根/凸缘)
+        var W = 5;
+        var bestWinStart = NBINS - W;
         var bestCover = 0;
-        var minCover = 24; // 至少覆盖2/3圈才算齿尖层
-        for (var i = NBINS - 1; i >= 0; i -= 1)
+        var minBinForTip = floor(NBINS * 0.8); // 只在顶部20%半径范围找
+        for (var i = minBinForTip; i <= NBINS - W; i += 1)
         {
-            if (bucketAngleCover[i] >= minCover)
+            // 合并窗口内 W 个桶的角度集合
+            var covered = 0;
+            for (var a = 0; a < NANGLE; a += 1)
             {
-                bestBin = i;
-                bestCover = bucketAngleCover[i];
-                break;
-            }
-        }
-        // 回退: 如果没有桶满足 minCover, 用角度覆盖最广的桶
-        if (bestCover == 0)
-        {
-            for (var i = 0; i < NBINS; i += 1)
-            {
-                if (bucketAngleCover[i] > bestCover)
+                var has = false;
+                for (var b = i; b < i + W; b += 1)
                 {
-                    bestCover = bucketAngleCover[i];
-                    bestBin = i;
+                    if (bucketAngleSet[b][a]) { has = true; break; }
                 }
+                if (has) covered += 1;
+            }
+            if (covered > bestCover)
+            {
+                bestCover = covered;
+                bestWinStart = i;
             }
         }
-        var tipCircleR = minVR + rRange * (bestBin + 0.5) / NBINS;
-
-        // 齿尖顶点: radius在tipCircleR附近(±5%全局maxR)
-        var tipTol = globalMaxVR * 0.05;
+        // tipCircleR = 窗口中心半径 (覆盖齿尖矩形全部顶点)
+        var tipCircleR = minVR + rRange * (bestWinStart + W / 2) / NBINS;
+        // tipTol 覆盖整个窗口宽度 (确保4顶点都在容差内)
+        var tipTol = max(globalMaxVR * 0.02, rRange * W / NBINS * 0.7);
         var tipLo = tipCircleR - tipTol;
         var tipHi = tipCircleR + tipTol;
         var tipVertexCount = 0;
