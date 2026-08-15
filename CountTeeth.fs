@@ -104,12 +104,6 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         // 对称零件 bbox 中心 ≈ 回转中心, 更稳健
         var radialOffset = (bboxCenter - axisOrigin) - dot(bboxCenter - axisOrigin, axisDir) * axisDir;
         var center = axisOrigin + radialOffset; // 径向(XZ)=bboxCenter, 轴向(Y)=axisOrigin
-        var centerOnAxis = center + dot(bboxCenter - center, axisDir) * axisDir;
-
-        // ---------- 3. 标识轴和中心 -----------------------------------------
-        // 黄色画轴(用线)和中心点
-        try silent { debug(context, line(centerOnAxis, axisDir), DebugColor.YELLOW); }
-        debug(context, centerOnAxis, DebugColor.YELLOW);
 
         // ---------- 4. 全局径向采样 -----------------------------------------
         var allEdges = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.EDGE));
@@ -163,6 +157,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         //   凸缘顶点数少(每圈凸缘只有少量顶点), 不会主导直方图.
         var allVertices = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.VERTEX));
         var vertexPoints = [];
+        var allAxials = [];
         for (var v in allVertices)
         {
             try silent
@@ -172,8 +167,23 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 var r = norm(d - dot(d, axisDir) * axisDir);
                 var ax = dot(d, axisDir); // 相对中位面的轴向位置
                 vertexPoints = append(vertexPoints, { "point" : pt, "radius" : r, "axial" : ax });
+                allAxials = append(allAxials, ax);
             }
         }
+
+        // 修正 center 的轴向坐标: 用顶点 axial 的中位数 = 零件轴向中位面
+        // (axisOrigin 的轴向位置可能偏离零件中心, 导致对称点 ax' ≠ -ax)
+        var sortedAxials = sort(allAxials, function(a, b) { return (a - b) / meter; });
+        var axialMid = sortedAxials[floor(size(sortedAxials) / 2)];
+        center = center + axialMid * axisDir; // 把中位面移到 ax=0
+        // 重算所有顶点的 axial (相对新中位面)
+        for (var i = 0; i < size(vertexPoints); i += 1)
+            vertexPoints[i].axial = vertexPoints[i].axial - axialMid;
+
+        // ---------- 3. 标识轴和中心 -----------------------------------------
+        // 黄色画轴(用线)和中心点 (center 已修正为径向bbox+轴向中位数)
+        try silent { debug(context, line(center, axisDir), DebugColor.YELLOW); }
+        debug(context, center, DebugColor.YELLOW);
 
         // 找全局maxR(含凸缘)和minR, 用于直方图范围
         var globalMaxVR = 0 * meter;
@@ -294,9 +304,10 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
 
         // 对称性筛选: 中位面在 ax=0, 每个点需在对称位置 ax'≈-ax (角度相同)有匹配点
-        // 容差: 轴向 1mm, 角度 2度. 无对称匹配的点(字样/单侧凸缘)被排除.
-        var axTolSym = 0.001 * meter;
-        var angTolSym = 2.0;
+        // 容差: 轴向 2mm, 角度 3度. 无对称匹配的点(字样/单侧凸缘)被排除.
+        // 若筛选后点太少(对称性不明显的零件), 回退到无对称筛选.
+        var axTolSym = 0.002 * meter;
+        var angTolSym = 3.0;
         var symTipPts = [];
         for (var i = 0; i < size(tipPts); i += 1)
         {
@@ -315,7 +326,9 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             if (hasSym)
                 symTipPts = append(symTipPts, p);
         }
-        tipPts = symTipPts;
+        // 回退: 对称筛选后点太少则保留原 tipPts (有些零件齿不对称)
+        if (size(symTipPts) >= 3)
+            tipPts = symTipPts;
 
         if (size(tipPts) < 3)
             throw "Too few tip vertices (" ~ toString(size(tipPts)) ~ ") for clustering. tipCircleR: " ~ toString(tipCircleR);
@@ -441,7 +454,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             ~ " | Thresh: " ~ toString(round(thresh * 10) / 10)
             ~ " | BigGapAvg: " ~ toString(round(bigGapAvg * 10) / 10)
             ~ " | ExpectedGap: " ~ toString(round(expectedGap * 10) / 10)
-            ~ " | Center: " ~ toString(centerOnAxis)
+            ~ " | Center: " ~ toString(center)
             ~ " | Edges: " ~ toString(size(allEdges));
 
         reportFeatureInfo(context, id, diagMsg);
