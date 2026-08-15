@@ -194,16 +194,17 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             if (vp.radius < minVR) minVR = vp.radius;
         }
 
-        // 半径直方图: 分100桶(更细), 对每个桶统计顶点覆盖了多少个不同的角度桶(36个角度桶, 每10度)
-        // 齿尖矩形4顶点可能分到相邻2-3个桶(外侧2点半径最大, 内侧2点略小),
-        // 用滑动窗口合并相邻桶的角度覆盖, 找覆盖最广的连续区间 = 齿尖层
-        var NBINS = 100;
+        // 半径直方图: 分50桶, 对每个桶统计顶点覆盖了多少个不同的角度桶(36个角度桶, 每10度)
+        // 齿尖顶点覆盖全圈(角度覆盖~36), 凸缘顶点覆盖少(凸缘是连续环但顶点少)
+        var NBINS = 50;
         var NANGLE = 36;
         var rRange = globalMaxVR - minVR;
         if (rRange == 0 * meter) rRange = 1 * meter;
-        var bucketAngleSet = []; // 每个半径桶的角度集合
+        var bucketAngleCover = []; // 每个半径桶的角度覆盖数
+        var bucketAngleSet = []; // 每个半径桶的角度集合(用二维数组)
         for (var i = 0; i < NBINS; i += 1)
         {
+            bucketAngleCover = append(bucketAngleCover, 0);
             var aSet = [];
             for (var j = 0; j < NANGLE; j += 1) aSet = append(aSet, false);
             bucketAngleSet = append(bucketAngleSet, aSet);
@@ -222,62 +223,28 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
                 if (angle < 0) angle += 360;
                 var aIdx = floor(angle / 360 * NANGLE) % NANGLE;
-                bucketAngleSet[bIdx][aIdx] = true;
+                if (!bucketAngleSet[bIdx][aIdx])
+                {
+                    bucketAngleSet[bIdx][aIdx] = true;
+                    bucketAngleCover[bIdx] += 1;
+                }
             }
         }
-        // 滑动窗口: 从最大半径往下找第一个角度覆盖足够的窗口
-        // 矩形与轴向平行: 4顶点半径相同(都在齿尖圆), 应在最大半径桶
-        // 齿尖4点/齿, 齿距>10度桶宽时每齿集中在1个角度桶, 覆盖~N/36 (非36)
-        // 所以从最大半径往下找第一个覆盖>=12/36(1/3圈)的窗口 = 最外侧齿尖层
-        var W = 5;
-        var bestWinStart = NBINS - W;
+        // 选角度覆盖最广的桶 = 齿顶圆半径(齿尖顶点覆盖全圈)
+        var bestBin = 0;
         var bestCover = 0;
-        var minCover = 12; // 至少1/3圈
-        for (var i = NBINS - W; i >= floor(NBINS * 0.5); i -= 1)
+        for (var i = 0; i < NBINS; i += 1)
         {
-            var covered = 0;
-            for (var a = 0; a < NANGLE; a += 1)
+            if (bucketAngleCover[i] > bestCover)
             {
-                var has = false;
-                for (var b = i; b < i + W; b += 1)
-                {
-                    if (bucketAngleSet[b][a]) { has = true; break; }
-                }
-                if (has) covered += 1;
-            }
-            if (covered >= minCover)
-            {
-                bestWinStart = i;
-                bestCover = covered;
-                break;
+                bestCover = bucketAngleCover[i];
+                bestBin = i;
             }
         }
-        // 回退: 找覆盖最广的
-        if (bestCover == 0)
-        {
-            for (var i = floor(NBINS * 0.5); i <= NBINS - W; i += 1)
-            {
-                var covered = 0;
-                for (var a = 0; a < NANGLE; a += 1)
-                {
-                    var has = false;
-                    for (var b = i; b < i + W; b += 1)
-                    {
-                        if (bucketAngleSet[b][a]) { has = true; break; }
-                    }
-                    if (has) covered += 1;
-                }
-                if (covered > bestCover)
-                {
-                    bestCover = covered;
-                    bestWinStart = i;
-                }
-            }
-        }
-        // tipCircleR = 窗口中心半径 (覆盖齿尖矩形全部顶点)
-        var tipCircleR = minVR + rRange * (bestWinStart + W / 2) / NBINS;
-        // tipTol 覆盖整个窗口宽度 (确保4顶点都在容差内)
-        var tipTol = max(globalMaxVR * 0.02, rRange * W / NBINS * 0.7);
+        var tipCircleR = minVR + rRange * (bestBin + 0.5) / NBINS;
+
+        // 齿尖顶点: radius在tipCircleR附近(±2%全局maxR)
+        var tipTol = globalMaxVR * 0.02;
         var tipLo = tipCircleR - tipTol;
         var tipHi = tipCircleR + tipTol;
         var tipVertexCount = 0;
@@ -293,7 +260,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 if (angle < 0)
                     angle += 360;
                 tipAngles = append(tipAngles, angle);
-                tipPts = append(tipPts, { "angle" : angle, "point" : vp.point, "axial" : vp.axial });
+                tipPts = append(tipPts, { "angle" : angle, "point" : vp.point });
             }
         }
 
@@ -351,7 +318,9 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         if (tipVertexCount < 3)
             throw "Too few tip vertices after isolation filter (" ~ toString(tipVertexCount) ~ ").";
 
-        // 红点标出在分层滤波后绘制 (见下方)
+        // 红点标出过滤后的齿尖顶点
+        for (var p in tipPts)
+            debug(context, p.point, DebugColor.RED);
 
         // 聚类数齿: 用最大gap估计齿距, 再按齿距的一半聚类
         // maxGap是最大的齿间gap, 360/maxGap给出齿数下界估计
@@ -373,81 +342,6 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         if (teeth < 1)
             teeth = 1;
 
-        // ---------- 5c. 轴向分层滤波 ---------------------------------------
-        // 第一次算出 teeth 后, 检验每个水平截面(按axial分组)的红点数.
-        // 若某截面点数 < teeth (说明该截面不是真正的齿尖层, 如字样/凸缘),
-        // 过滤掉该截面所有点, 用剩余点重新计算齿数.
-        var layerFilterApplied = false;
-        if (teeth >= 6 && size(tipPts) > teeth * 2)
-        {
-            // 按axial聚类分层 (容差 0.5mm)
-            var layerTol = 0.0005 * meter;
-            var layers = []; // 每层 = { axial, pts: [] }
-            for (var p in tipPts)
-            {
-                var foundLayer = false;
-                for (var L = 0; L < size(layers); L += 1)
-                {
-                    if (abs(layers[L].axial - p.axial) < layerTol)
-                    {
-                        layers[L].pts = append(layers[L].pts, p);
-                        foundLayer = true;
-                        break;
-                    }
-                }
-                if (!foundLayer)
-                    layers = append(layers, { "axial" : p.axial, "pts" : [p] });
-            }
-
-            // 过滤掉点数 < teeth 的层 (这些层不是真正的齿尖层)
-            var filteredTipPts2 = [];
-            for (var L = 0; L < size(layers); L += 1)
-            {
-                if (size(layers[L].pts) >= teeth)
-                {
-                    for (var p in layers[L].pts)
-                        filteredTipPts2 = append(filteredTipPts2, p);
-                }
-            }
-
-            // 如果过滤后点数变化且仍 >= 3, 重新计算齿数
-            if (size(filteredTipPts2) >= 3 && size(filteredTipPts2) < size(tipPts))
-            {
-                tipPts = sort(filteredTipPts2, function(a, b) { return a.angle - b.angle; });
-                tipAngles = [];
-                for (var p in tipPts)
-                    tipAngles = append(tipAngles, p.angle);
-                tipVertexCount = size(tipAngles);
-
-                gaps = [];
-                for (var i = 1; i < size(tipAngles); i += 1)
-                    gaps = append(gaps, tipAngles[i] - tipAngles[i - 1]);
-                wrapGap = (360 - tipAngles[size(tipAngles) - 1]) + tipAngles[0];
-                gaps = append(gaps, wrapGap);
-
-                sortedGaps = sort(gaps, function(a, b) { return a - b; });
-                maxGap = sortedGaps[size(sortedGaps) - 1];
-                estTeeth = floor(360 / maxGap + 0.5);
-                if (estTeeth < 1) estTeeth = 1;
-                estPitch = 360 / estTeeth;
-                clusterThresh = estPitch * 0.5;
-
-                teeth = 0;
-                for (var g in gaps)
-                {
-                    if (g > clusterThresh)
-                        teeth += 1;
-                }
-                if (teeth < 1)
-                    teeth = 1;
-                layerFilterApplied = true;
-            }
-        }
-
-        // 红点标出最终的齿尖顶点 (分层滤波后)
-        for (var p in tipPts)
-            debug(context, p.point, DebugColor.RED);
-
         // 诊断: gap统计
         var smallGapCount = 0;
         var bigGapCount = 0;
@@ -466,6 +360,15 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         if (bigGapCount > 0)
             bigGapAvg = bigGapSum / bigGapCount;
 
+        // 修正: 矩形不共面排列时, 每齿4顶点对称分布, 齿间和齿内各2个gap,
+        // small gap数 == big gap数, 导致齿数翻倍. 此时除以2.
+        if (bigGapCount > 0 && smallGapCount > 0 &&
+            abs(bigGapCount - smallGapCount) <= max(1, floor(bigGapCount * 0.1)))
+        {
+            teeth = floor(teeth / 2);
+            if (teeth < 1) teeth = 1;
+        }
+
         // 校验: 大gap平均值应接近 360/teeth
         var expectedGap = 360 / teeth;
         var bigGaps = bigGapCount;
@@ -483,7 +386,6 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             ~ " | BigGapAvg: " ~ toString(round(bigGapAvg * 10) / 10)
             ~ " | ExpectedGap: " ~ toString(round(expectedGap * 10) / 10)
             ~ " | Center: " ~ toString(center)
-            ~ " | LayerFiltered: " ~ toString(layerFilterApplied)
             ~ " | Edges: " ~ toString(size(allEdges));
 
         reportFeatureInfo(context, id, diagMsg);
