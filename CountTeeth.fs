@@ -224,7 +224,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         for (var sd in allSampleData)
         {
             if (sd.radius > capR) continue;
-            var bIdx = floor(sd.angle / (2 * PI) * NBUCKETS) % NBUCKETS;
+            var bIdx = floor((sd.angle / (2 * PI) * NBUCKETS) / radian) % NBUCKETS;
             if (sd.radius > bucketMaxR[bIdx])
                 bucketMaxR[bIdx] = sd.radius;
             if (sd.radius > 0 * meter && sd.radius < sampleMinR)
