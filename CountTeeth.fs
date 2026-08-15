@@ -230,15 +230,31 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 }
             }
         }
-        // 选角度覆盖最广的桶 = 齿顶圆半径(齿尖顶点覆盖全圈)
+        // 选齿顶圆半径: 从最大半径开始往下找, 第一个角度覆盖 >= 24/36 (2/3圈) 的桶
+        // 齿尖顶点覆盖全圈(>=36), 齿根/凸缘/字样覆盖少或不连续
+        // 从最大半径往下找确保选到的是齿尖(最高点), 而非齿根或中间半径
         var bestBin = 0;
         var bestCover = 0;
-        for (var i = 0; i < NBINS; i += 1)
+        var minCover = 24; // 至少覆盖2/3圈才算齿尖层
+        for (var i = NBINS - 1; i >= 0; i -= 1)
         {
-            if (bucketAngleCover[i] > bestCover)
+            if (bucketAngleCover[i] >= minCover)
             {
-                bestCover = bucketAngleCover[i];
                 bestBin = i;
+                bestCover = bucketAngleCover[i];
+                break;
+            }
+        }
+        // 回退: 如果没有桶满足 minCover, 用角度覆盖最广的桶
+        if (bestCover == 0)
+        {
+            for (var i = 0; i < NBINS; i += 1)
+            {
+                if (bucketAngleCover[i] > bestCover)
+                {
+                    bestCover = bucketAngleCover[i];
+                    bestBin = i;
+                }
             }
         }
         var tipCircleR = minVR + rRange * (bestBin + 0.5) / NBINS;
