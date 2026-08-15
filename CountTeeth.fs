@@ -278,11 +278,24 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 else if (inHigh && bucketMaxR[i] < edgeLowThresh)
                     inHigh = false;
             }
-            // 首尾同齿修正: 如果首尾非空桶都在high, 减1
-            if (edgeTeeth > 1 &&
-                bucketMaxR[nonZeroIdxs[0]] >= edgeHighThresh &&
-                bucketMaxR[nonZeroIdxs[size(nonZeroIdxs) - 1]] >= edgeHighThresh)
+            // 首尾同齿修正: 仅当首尾非空桶相邻(跨度<3桶)时才减1, 否则可能是半圈无数据
+            var firstIdx = nonZeroIdxs[0];
+            var lastIdx = nonZeroIdxs[size(nonZeroIdxs) - 1];
+            var wrapSpan = (firstIdx + NBUCKETS - lastIdx) % NBUCKETS;
+            if (edgeTeeth > 1 && wrapSpan <= 3 &&
+                bucketMaxR[firstIdx] >= edgeHighThresh &&
+                bucketMaxR[lastIdx] >= edgeHighThresh)
                 edgeTeeth -= 1;
+
+            // 半圈修正: 如果非空桶跨度 < 540°(3/4圈), 按角度比例放大
+            // (采样只覆盖部分角度时, 实际齿数 = 计数 * 360 / 覆盖角度)
+            var angleSpan = (lastIdx - firstIdx + NBUCKETS) % NBUCKETS;
+            if (angleSpan > 0 && angleSpan < NBUCKETS * 0.9)
+            {
+                var coverageRatio = angleSpan / NBUCKETS;
+                if (coverageRatio > 0.1 && coverageRatio < 0.95)
+                    edgeTeeth = round(edgeTeeth / coverageRatio);
+            }
         }
 
         // 齿尖顶点: radius在tipCircleR附近(收紧容差: 直方图桶宽的70%, 排除字样顶点)
@@ -393,15 +406,20 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         for (var p in tipPts)
             debug(context, p.point, DebugColor.RED);
 
-        // 聚类数齿: 用最大gap估计齿距, 再按齿距的一半聚类
-        // maxGap是最大的齿间gap, 360/maxGap给出齿数下界估计
-        // 阈值 = 估计齿距 * 0.5 (同齿内gap < 半齿距, 齿间gap > 半齿距)
+        // 聚类数齿: 用gap中位数估计齿距 (比maxGap鲁棒: maxGap会被半圈无数据的wrapGap污染)
+        // 同齿内gap小(齿尖顶点密集), 齿间gap大(=齿距). 用中位数*2估计齿距.
         var sortedGaps = sort(gaps, function(a, b) { return a - b; });
+        var medianGap = sortedGaps[floor(size(sortedGaps) / 2)];
         var maxGap = sortedGaps[size(sortedGaps) - 1];
-        var estTeeth = floor(360 / maxGap + 0.5);
-        if (estTeeth < 1) estTeeth = 1;
-        var estPitch = 360 / estTeeth;
-        var clusterThresh = estPitch * 0.5;
+        // 齿距估计: 中位数gap * 2 (中位数=同齿内gap, 齿距≈2倍同齿内gap)
+        // 若中位数gap偏大(每齿1点), 直接用中位数作齿距
+        var estPitch = medianGap * 2;
+        // 用 maxGap 排除异常: 若 maxGap > estPitch*1.5, 说明有半圈无数据, estPitch 不可靠
+        // 此时用最小gap的两倍估计(最小gap=同齿内最近顶点间距)
+        var minGap = sortedGaps[0];
+        if (maxGap > estPitch * 1.5 && size(sortedGaps) > 4)
+            estPitch = minGap * 2;
+        var clusterThresh = estPitch * 0.75; // 阈值=0.75齿距, 同齿gap<阈值, 齿间gap>阈值
 
         // 数gap > 阈值的次数 = 齿间分隔数 = 齿数
         var teeth = 0;
