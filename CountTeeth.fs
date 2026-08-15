@@ -260,7 +260,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 if (angle < 0)
                     angle += 360;
                 tipAngles = append(tipAngles, angle);
-                tipPts = append(tipPts, { "angle" : angle, "point" : vp.point });
+                tipPts = append(tipPts, { "angle" : angle, "point" : vp.point, "axial" : vp.axial });
             }
         }
 
@@ -318,9 +318,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         if (tipVertexCount < 3)
             throw "Too few tip vertices after isolation filter (" ~ toString(tipVertexCount) ~ ").";
 
-        // 红点标出过滤后的齿尖顶点
-        for (var p in tipPts)
-            debug(context, p.point, DebugColor.RED);
+        // 红点标出在分层滤波后绘制 (见下方)
 
         // 聚类数齿: 用最大gap估计齿距, 再按齿距的一半聚类
         // maxGap是最大的齿间gap, 360/maxGap给出齿数下界估计
@@ -341,6 +339,81 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
         if (teeth < 1)
             teeth = 1;
+
+        // ---------- 5c. 轴向分层滤波 ---------------------------------------
+        // 第一次算出 teeth 后, 检验每个水平截面(按axial分组)的红点数.
+        // 若某截面点数 < teeth (说明该截面不是真正的齿尖层, 如字样/凸缘),
+        // 过滤掉该截面所有点, 用剩余点重新计算齿数.
+        var layerFilterApplied = false;
+        if (teeth >= 6 && size(tipPts) > teeth * 2)
+        {
+            // 按axial聚类分层 (容差 0.5mm)
+            var layerTol = 0.0005 * meter;
+            var layers = []; // 每层 = { axial, pts: [] }
+            for (var p in tipPts)
+            {
+                var foundLayer = false;
+                for (var L = 0; L < size(layers); L += 1)
+                {
+                    if (abs(layers[L].axial - p.axial) < layerTol)
+                    {
+                        layers[L].pts = append(layers[L].pts, p);
+                        foundLayer = true;
+                        break;
+                    }
+                }
+                if (!foundLayer)
+                    layers = append(layers, { "axial" : p.axial, "pts" : [p] });
+            }
+
+            // 过滤掉点数 < teeth 的层 (这些层不是真正的齿尖层)
+            var filteredTipPts2 = [];
+            for (var L = 0; L < size(layers); L += 1)
+            {
+                if (size(layers[L].pts) >= teeth)
+                {
+                    for (var p in layers[L].pts)
+                        filteredTipPts2 = append(filteredTipPts2, p);
+                }
+            }
+
+            // 如果过滤后点数变化且仍 >= 3, 重新计算齿数
+            if (size(filteredTipPts2) >= 3 && size(filteredTipPts2) < size(tipPts))
+            {
+                tipPts = sort(filteredTipPts2, function(a, b) { return a.angle - b.angle; });
+                tipAngles = [];
+                for (var p in tipPts)
+                    tipAngles = append(tipAngles, p.angle);
+                tipVertexCount = size(tipAngles);
+
+                gaps = [];
+                for (var i = 1; i < size(tipAngles); i += 1)
+                    gaps = append(gaps, tipAngles[i] - tipAngles[i - 1]);
+                wrapGap = (360 - tipAngles[size(tipAngles) - 1]) + tipAngles[0];
+                gaps = append(gaps, wrapGap);
+
+                sortedGaps = sort(gaps, function(a, b) { return a - b; });
+                maxGap = sortedGaps[size(sortedGaps) - 1];
+                estTeeth = floor(360 / maxGap + 0.5);
+                if (estTeeth < 1) estTeeth = 1;
+                estPitch = 360 / estTeeth;
+                clusterThresh = estPitch * 0.5;
+
+                teeth = 0;
+                for (var g in gaps)
+                {
+                    if (g > clusterThresh)
+                        teeth += 1;
+                }
+                if (teeth < 1)
+                    teeth = 1;
+                layerFilterApplied = true;
+            }
+        }
+
+        // 红点标出最终的齿尖顶点 (分层滤波后)
+        for (var p in tipPts)
+            debug(context, p.point, DebugColor.RED);
 
         // 诊断: gap统计
         var smallGapCount = 0;
@@ -377,6 +450,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             ~ " | BigGapAvg: " ~ toString(round(bigGapAvg * 10) / 10)
             ~ " | ExpectedGap: " ~ toString(round(expectedGap * 10) / 10)
             ~ " | Center: " ~ toString(center)
+            ~ " | LayerFiltered: " ~ toString(layerFilterApplied)
             ~ " | Edges: " ~ toString(size(allEdges));
 
         reportFeatureInfo(context, id, diagMsg);
