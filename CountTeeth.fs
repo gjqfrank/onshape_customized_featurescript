@@ -243,8 +243,8 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         }
         var tipCircleR = minVR + rRange * (bestBin + 0.5) / NBINS;
 
-        // 齿尖顶点: radius在tipCircleR附近(±2%全局maxR)
-        var tipTol = globalMaxVR * 0.02;
+        // 齿尖顶点: radius在tipCircleR附近(±5%全局maxR)
+        var tipTol = globalMaxVR * 0.05;
         var tipLo = tipCircleR - tipTol;
         var tipHi = tipCircleR + tipTol;
         var tipVertexCount = 0;
