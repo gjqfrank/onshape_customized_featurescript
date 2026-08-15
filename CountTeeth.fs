@@ -168,8 +168,10 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             try silent
             {
                 var pt = evVertexPoint(context, { "vertex" : v });
-                var r = radialDistance(pt, center, axisDir);
-                vertexPoints = append(vertexPoints, { "point" : pt, "radius" : r });
+                var d = pt - center;
+                var r = norm(d - dot(d, axisDir) * axisDir);
+                var ax = dot(d, axisDir); // 相对中位面的轴向位置
+                vertexPoints = append(vertexPoints, { "point" : pt, "radius" : r, "axial" : ax });
             }
         }
 
@@ -276,7 +278,8 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         // 齿尖顶点: radius在tipCircleR附近(收紧容差: 直方图桶宽的70%, 排除字样顶点)
         var tipTol = min(globalMaxVR * 0.02, rRange / NBINS * 0.7);
         var tipVertexCount = 0;
-        var tipAngles = []; // 角度(度)
+        // 先收集所有半径匹配的齿尖点(带角度+轴向)
+        var tipPts = [];
         for (var vp in vertexPoints)
         {
             if (abs(vp.radius - tipCircleR) < tipTol)
@@ -286,15 +289,42 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
                 if (angle < 0)
                     angle += 360;
-                tipAngles = append(tipAngles, angle);
+                tipPts = append(tipPts, { "angle" : angle, "axial" : vp.axial, "point" : vp.point });
             }
         }
 
-        if (size(tipAngles) < 3)
-            throw "Too few tip vertices (" ~ toString(size(tipAngles)) ~ ") for clustering. tipCircleR: " ~ toString(tipCircleR);
+        // 对称性筛选: 中位面在 ax=0, 每个点需在对称位置 ax'≈-ax (角度相同)有匹配点
+        // 容差: 轴向 1mm, 角度 2度. 无对称匹配的点(字样/单侧凸缘)被排除.
+        var axTolSym = 0.001 * meter;
+        var angTolSym = 2.0;
+        var symTipPts = [];
+        for (var i = 0; i < size(tipPts); i += 1)
+        {
+            var p = tipPts[i];
+            var hasSym = false;
+            for (var j = 0; j < size(tipPts); j += 1)
+            {
+                if (j == i) continue;
+                var q = tipPts[j];
+                if (abs(q.axial + p.axial) < axTolSym && abs(q.angle - p.angle) < angTolSym)
+                {
+                    hasSym = true;
+                    break;
+                }
+            }
+            if (hasSym)
+                symTipPts = append(symTipPts, p);
+        }
+        tipPts = symTipPts;
 
-        // 按角度排序
-        tipAngles = sort(tipAngles, function(a, b) { return a - b; });
+        if (size(tipPts) < 3)
+            throw "Too few tip vertices (" ~ toString(size(tipPts)) ~ ") for clustering. tipCircleR: " ~ toString(tipCircleR);
+
+        // 按角度排序 tipPts (保持 tipAngles 与 tipPts 索引一致)
+        tipPts = sort(tipPts, function(a, b) { return a.angle - b.angle; });
+        var tipAngles = []; // 角度(度)
+        for (var p in tipPts)
+            tipAngles = append(tipAngles, p.angle);
 
         // 计算所有相邻角度差(含wrap-around)
         var gaps = [];
@@ -326,6 +356,14 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 filteredAngles = append(filteredAngles, tipAngles[i]);
         }
         tipAngles = filteredAngles;
+        // 同步过滤 tipPts (保留 isolation filter 通过的点)
+        var filteredTipPts = [];
+        for (var i = 0; i < size(tipPts); i += 1)
+        {
+            if (nnDists[i] <= nnThresh)
+                filteredTipPts = append(filteredTipPts, tipPts[i]);
+        }
+        tipPts = filteredTipPts;
         tipVertexCount = size(tipAngles);
 
         // 重新计算gaps(过滤后)
@@ -339,25 +377,8 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             throw "Too few tip vertices after isolation filter (" ~ toString(tipVertexCount) ~ ").";
 
         // 红点标出过滤后的齿尖顶点
-        for (var vp in vertexPoints)
-        {
-            if (abs(vp.radius - tipCircleR) < tipTol)
-            {
-                var d = vp.point - center;
-                var proj = d - dot(d, axisDir) * axisDir;
-                var angle = atan2(dot(proj, refV), dot(proj, refU)) / degree;
-                if (angle < 0)
-                    angle += 360;
-                // 检查该角度是否在过滤后的列表中
-                var found = false;
-                for (var a in tipAngles)
-                {
-                    if (abs(a - angle) < 0.5) { found = true; break; }
-                }
-                if (found)
-                    debug(context, vp.point, DebugColor.RED);
-            }
-        }
+        for (var p in tipPts)
+            debug(context, p.point, DebugColor.RED);
 
         // 聚类数齿: 用最大gap估计齿距, 再按齿距的一半聚类
         // maxGap是最大的齿间gap, 360/maxGap给出齿数下界估计
