@@ -196,16 +196,17 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             if (frac > 0.999) frac = 0.999;
             rHisto[floor(frac * NBINS)] += 1;
         }
-        // 找最高桶(齿顶圆半径所在), 但只在半径>50%maxR的桶里找(排除内孔)
+        // 找齿顶圆半径: 从最大半径开始, 找第一个顶点数 >= 8 的桶
+        // (齿尖是最大半径, 每齿至少1~2个顶点, 8T以上齿尖顶点数 >= 8;
+        //  凸缘/字样顶点少 < 8, 不会误选)
         var bestBin = 0;
-        var bestHistoCount = 0;
-        for (var i = 0; i < NBINS; i += 1)
+        for (var i = NBINS - 1; i >= 0; i -= 1)
         {
             var binR = minVR + rRange * (i + 0.5) / NBINS;
-            if (binR > globalMaxVR * 0.5 && rHisto[i] > bestHistoCount)
+            if (binR > globalMaxVR * 0.5 && rHisto[i] >= 8)
             {
-                bestHistoCount = rHisto[i];
                 bestBin = i;
+                break;
             }
         }
         var tipCircleR = minVR + rRange * (bestBin + 0.5) / NBINS;
