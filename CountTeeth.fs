@@ -467,6 +467,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             ~ " | SmallGaps: " ~ toString(smallGapCount)
             ~ " | Thresh: " ~ toString(round(thresh * 10) / 10)
             ~ " | BigGapAvg: " ~ toString(round(bigGapAvg * 10) / 10)
+            ~ " | SmallGapAvg: " ~ toString(round(smallGapAvg * 10) / 10)
             ~ " | ExpectedGap: " ~ toString(round(expectedGap * 10) / 10)
             ~ " | Center: " ~ toString(center)
             ~ " | LayerFiltered: " ~ toString(layerFilterApplied)
