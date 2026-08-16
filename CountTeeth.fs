@@ -444,12 +444,14 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         // 排序后: 2个small gap(≈0, 同齿同角度) + 2个big gap(≈半齿距, 齿间),
         // 导致 maxGap=半齿距, 齿数翻倍. 此时除以2.
         // 判据: SmallGapAvg≈0 (同角度) 且 SmallGaps≈BigGaps (数量相等)
+        var rectCorr = false;
         if (bigGapCount > 0 && smallGapCount > 0 &&
             smallGapAvg < 1.0 &&
             abs(bigGapCount - smallGapCount) <= max(1, floor(bigGapCount * 0.1)))
         {
             teeth = floor(teeth / 2);
             if (teeth < 1) teeth = 1;
+            rectCorr = true;
         }
 
         // 校验: 大gap平均值应接近 360/teeth
@@ -471,6 +473,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             ~ " | ExpectedGap: " ~ toString(round(expectedGap * 10) / 10)
             ~ " | Center: " ~ toString(center)
             ~ " | LayerFiltered: " ~ toString(layerFilterApplied)
+            ~ " | RectCorr: " ~ toString(rectCorr)
             ~ " | Edges: " ~ toString(size(allEdges));
 
         reportFeatureInfo(context, id, diagMsg);
