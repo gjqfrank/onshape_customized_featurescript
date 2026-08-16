@@ -440,13 +440,13 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         if (smallGapCount > 0)
             smallGapAvg = smallGapSum / smallGapCount;
 
-        // 修正: 矩形不共面排列时, 每齿4顶点对称分布, 齿间和齿内各2个gap,
-        // small gap数 == big gap数, 且 big≈small (都是半齿距), 导致齿数翻倍.
-        // 线段(2顶点/齿)虽然 small==big, 但 small≈0, big≈齿距, 比值很大.
-        // 用 big/small 比值 < 2 区分矩形(比值≈1)和线段(比值>>1).
-        if (bigGapCount > 0 && smallGapCount > 0 && smallGapAvg > 0.01 &&
-            abs(bigGapCount - smallGapCount) <= max(1, floor(bigGapCount * 0.1)) &&
-            bigGapAvg / smallGapAvg < 2)
+        // 修正: 矩形不共面排列(矩形与轴向平行), 每齿4顶点分上下两截面(角度相同),
+        // 排序后: 2个small gap(≈0, 同齿同角度) + 2个big gap(≈半齿距, 齿间),
+        // 导致 maxGap=半齿距, 齿数翻倍. 此时除以2.
+        // 判据: SmallGapAvg≈0 (同角度) 且 SmallGaps≈BigGaps (数量相等)
+        if (bigGapCount > 0 && smallGapCount > 0 &&
+            smallGapAvg < 1.0 &&
+            abs(bigGapCount - smallGapCount) <= max(1, floor(bigGapCount * 0.1)))
         {
             teeth = floor(teeth / 2);
             if (teeth < 1) teeth = 1;
