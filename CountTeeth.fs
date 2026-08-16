@@ -419,6 +419,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         var smallGapCount = 0;
         var bigGapCount = 0;
         var bigGapSum = 0;
+        var smallGapSum = 0;
         for (var g in gaps)
         {
             if (g > clusterThresh)
@@ -427,19 +428,25 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
                 bigGapSum += g;
             }
             else
+            {
                 smallGapCount += 1;
+                smallGapSum += g;
+            }
         }
         var bigGapAvg = 0;
         if (bigGapCount > 0)
             bigGapAvg = bigGapSum / bigGapCount;
+        var smallGapAvg = 0;
+        if (smallGapCount > 0)
+            smallGapAvg = smallGapSum / smallGapCount;
 
         // 修正: 矩形不共面排列时, 每齿4顶点对称分布, 齿间和齿内各2个gap,
-        // small gap数 == big gap数, 导致齿数翻倍. 此时除以2.
-        // 但线段(2顶点/齿)也是small==big, 不应除2, 所以加顶点数>=3条件
-        var vpt = (teeth > 0) ? tipVertexCount / teeth : 0;
-        if (bigGapCount > 0 && smallGapCount > 0 &&
+        // small gap数 == big gap数, 且 big≈small (都是半齿距), 导致齿数翻倍.
+        // 线段(2顶点/齿)虽然 small==big, 但 small≈0, big≈齿距, 比值很大.
+        // 用 big/small 比值 < 2 区分矩形(比值≈1)和线段(比值>>1).
+        if (bigGapCount > 0 && smallGapCount > 0 && smallGapAvg > 0.01 &&
             abs(bigGapCount - smallGapCount) <= max(1, floor(bigGapCount * 0.1)) &&
-            vpt >= 3)
+            bigGapAvg / smallGapAvg < 2)
         {
             teeth = floor(teeth / 2);
             if (teeth < 1) teeth = 1;
