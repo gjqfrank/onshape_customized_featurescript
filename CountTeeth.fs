@@ -435,8 +435,11 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
 
         // 修正: 矩形不共面排列时, 每齿4顶点对称分布, 齿间和齿内各2个gap,
         // small gap数 == big gap数, 导致齿数翻倍. 此时除以2.
+        // 但线段(2顶点/齿)也是small==big, 不应除2, 所以加顶点数>=3条件
+        var vpt = (teeth > 0) ? tipVertexCount / teeth : 0;
         if (bigGapCount > 0 && smallGapCount > 0 &&
-            abs(bigGapCount - smallGapCount) <= max(1, floor(bigGapCount * 0.1)))
+            abs(bigGapCount - smallGapCount) <= max(1, floor(bigGapCount * 0.1)) &&
+            vpt >= 3)
         {
             teeth = floor(teeth / 2);
             if (teeth < 1) teeth = 1;
