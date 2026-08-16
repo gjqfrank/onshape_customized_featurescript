@@ -440,14 +440,60 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         if (smallGapCount > 0)
             smallGapAvg = smallGapSum / smallGapCount;
 
-        // 修正: 矩形不共面排列(矩形与轴向平行), 每齿4顶点分上下两截面(角度相同),
-        // 排序后: 2个small gap(≈0, 同齿同角度) + 2个big gap(≈半齿距, 齿间),
-        // 导致 maxGap=半齿距, 齿数翻倍. 此时除以2.
-        // 判据: SmallGapAvg≈0 (同角度) 且 SmallGaps≈BigGaps (数量相等)
+        // 修正: big gap≈small gap 时, 用 big gap 中点半径区分两种情况:
+        //   - high big gap ≈ low big gap (平顶齿, 同齿顶点同角度) → 不除以2
+        //   - high big gap ≠ low big gap (矩形排列, 齿数翻倍) → 除以2
+        // 中点半径≈tipCircleR 为 high(平顶), <tipCircleR 为 low(齿间).
+        var NBUCKET = 360;
+        var angleMaxR = [];
+        for (var i = 0; i < NBUCKET; i += 1)
+            angleMaxR = append(angleMaxR, 0 * meter);
+        for (var s in allSampleData)
+        {
+            var angleDeg = s.angle / degree;
+            if (angleDeg < 0) angleDeg += 360;
+            var bIdx = floor(angleDeg) % NBUCKET;
+            if (bIdx < 0) bIdx += NBUCKET;
+            if (s.radius > angleMaxR[bIdx])
+                angleMaxR[bIdx] = s.radius;
+        }
+
+        var gapHighTol = globalMaxVR * 0.02;
+        var highBigGaps = 0;
+        var lowBigGaps = 0;
+        for (var i = 0; i < size(tipAngles); i += 1)
+        {
+            var a1 = tipAngles[i];
+            var a2;
+            if (i == size(tipAngles) - 1)
+                a2 = tipAngles[0] + 360;
+            else
+                a2 = tipAngles[i + 1];
+            if (a2 - a1 > clusterThresh)
+            {
+                var midAngle = (a1 + a2) / 2;
+                // ±2°窗口取最大半径(避免空桶)
+                var midR = 0 * meter;
+                for (var dt = -2; dt <= 2; dt += 1)
+                {
+                    var idx = floor(midAngle) + dt;
+                    idx = idx % NBUCKET;
+                    if (idx < 0) idx += NBUCKET;
+                    if (angleMaxR[idx] > midR)
+                        midR = angleMaxR[idx];
+                }
+                if (midR >= tipCircleR - gapHighTol)
+                    highBigGaps += 1;
+                else
+                    lowBigGaps += 1;
+            }
+        }
+
+        // 判据: big gap≈small gap, 且 high big gap ≠ low big gap → 除以2
         var rectCorr = false;
         if (bigGapCount > 0 && smallGapCount > 0 &&
-            smallGapAvg < 1.0 &&
-            abs(bigGapCount - smallGapCount) <= max(1, floor(bigGapCount * 0.1)))
+            abs(bigGapCount - smallGapCount) <= max(1, floor(bigGapCount * 0.1)) &&
+            abs(highBigGaps - lowBigGaps) > max(1, floor(lowBigGaps * 0.2)))
         {
             teeth = floor(teeth / 2);
             if (teeth < 1) teeth = 1;
@@ -474,6 +520,8 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             ~ " | Center: " ~ toString(center)
             ~ " | LayerFiltered: " ~ toString(layerFilterApplied)
             ~ " | RectCorr: " ~ toString(rectCorr)
+            ~ " | HighBigGaps: " ~ toString(highBigGaps)
+            ~ " | LowBigGaps: " ~ toString(lowBigGaps)
             ~ " | Edges: " ~ toString(size(allEdges));
 
         reportFeatureInfo(context, id, diagMsg);
