@@ -29,6 +29,46 @@ function pointToAxisDistance(point is Vector, axisOrigin is Vector, axisDir is V
     return norm(cross(d, axisDir));
 }
 
+// 从用户选择(面 or 封闭 edge) 获取平面
+// - 面: evPlane 直接取
+// - 边: 必须是封闭曲线(整圆 CIRCLE / 整椭圆 ELLIPSE), 用 evAxis 取轴构造平面
+function getPlaneFromSelection(context is Context, q is Query) returns Plane
+{
+    var resolved = evaluateQuery(context, q);
+    if (size(resolved) == 0)
+        throw "No entity selected for bounding plane.";
+
+    var ent = resolved[0];
+    var faceList = evaluateQuery(context, qEntityFilter(ent, EntityType.FACE));
+    var edgeList = evaluateQuery(context, qEntityFilter(ent, EntityType.EDGE));
+
+    if (size(faceList) > 0)
+    {
+        return evPlane(context, { "face" : faceList[0] });
+    }
+    else if (size(edgeList) > 0)
+    {
+        var edge = edgeList[0];
+        var etype = evEdgeType(context, { "edge" : edge });
+        if (etype != EdgeType.CIRCLE && etype != EdgeType.ELLIPSE)
+            throw "Selected edge must be a closed curve (full circle or full ellipse). Got edge type: " ~ toString(etype);
+
+        var ax = evAxis(context, { "axis" : edge });
+        var normal = ax.direction;
+        var refX;
+        if (abs(normal[0]) < 0.9)
+            refX = normalize(cross(normal, vector(1, 0, 0)));
+        else
+            refX = normalize(cross(normal, vector(0, 1, 0)));
+        var refY = cross(normal, refX);
+        return plane(ax.origin, normal, refX, refY);
+    }
+    else
+    {
+        throw "Selection must be a face or an edge.";
+    }
+}
+
 // (齿数由径向剖面的滞回阈值上升沿计数决定; 顶点仅用于红点可视化)
 
 annotation { "Feature Type Name" : "Count Teeth", "Feature Type Description" : "Count teeth of a pulley or sprocket" }
@@ -38,6 +78,15 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         annotation { "Name" : "Pulley or sprocket part", "Filter" : EntityType.BODY && BodyType.SOLID, "MaxNumberOfPicks" : 1 }
         definition.part is Query;
 
+        annotation { "Name" : "Choose where to count", "Default" : false }
+        definition.chooseWhereToCount is boolean;
+
+        annotation { "Name" : "Bounding plane 1 (face or closed edge)", "Filter" : EntityType.FACE || EntityType.EDGE, "MaxNumberOfPicks" : 1, "Condition" : definition.chooseWhereToCount }
+        definition.plane1 is Query;
+
+        annotation { "Name" : "Bounding plane 2 (face or closed edge)", "Filter" : EntityType.FACE || EntityType.EDGE, "MaxNumberOfPicks" : 1, "Condition" : definition.chooseWhereToCount }
+        definition.plane2 is Query;
+
         annotation { "Name" : "Rename part using tooth count", "Default" : false }
         definition.rename is boolean;
 
@@ -45,9 +94,79 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         definition.namePrefix is string;
     }
     {
+        // ---------- 0. 切片(若勾选 Choose where to count) -----------------
+        // 用两个平行平面切 Part, 取中间薄片(副本) 数齿.
+        // 不破坏原 Part: 先 opPattern 复制, 再对副本 INTERSECT 一个 slab.
+        var partToCount = definition.part;
+
+        if (definition.chooseWhereToCount)
+        {
+            var p1 = getPlaneFromSelection(context, definition.plane1);
+            var p2 = getPlaneFromSelection(context, definition.plane2);
+
+            // 验证两平面平行
+            var nDot = dot(p1.normal, p2.normal);
+            if (abs(abs(nDot) - 1) > 1e-4)
+                throw "Two planes must be parallel. Normals: " ~ toString(p1.normal) ~ " vs " ~ toString(p2.normal);
+
+            // 统一法向(让 p2.normal 与 p1 同向)
+            var normal = p1.normal;
+            if (nDot < 0)
+                p2 = plane(p2.origin, -p2.normal, -p2.x, -p2.y);
+
+            // 沿 normal 的有向距离, 让 p1 在前 p2 在后
+            var dist1 = dot(p1.origin, normal);
+            var dist2 = dot(p2.origin, normal);
+            if (dist2 < dist1)
+            {
+                var tmpP = p1; p1 = p2; p2 = tmpP;
+                var tmpD = dist1; dist1 = dist2; dist2 = tmpD;
+            }
+            var slabThickness = dist2 - dist1;
+            if (slabThickness <= 0 * millimeter)
+                throw "Two planes coincide; cannot form a slab.";
+
+            // 在 p1 上创建大矩形草图, 覆盖整个 Part bbox
+            var bbox0 = evBox3d(context, { "topology" : definition.part });
+            var halfSize = norm(bbox0.maxCorner - bbox0.minCorner) + 10 * millimeter;
+            var sketchId = id + "sketch";
+            var sk = newSketchOnPlane(context, sketchId, { "sketchPlane" : p1 });
+            skRectangle(sk, "rect", {
+                "firstCorner" : vector(-halfSize, -halfSize),
+                "secondCorner" : vector(halfSize, halfSize)
+            });
+            skSolve(context, sketchId);
+
+            // 拉伸 slab: 从 p1 沿 normal 到 p2
+            opExtrude(context, id + "extrude", {
+                "entities" : qCreatedBy(sketchId, EntityType.FACE),
+                "direction" : normal,
+                "endHeight" : slabThickness
+            });
+            var slab = qCreatedBy(id + "extrude", EntityType.BODY);
+
+            // 复制 Part(0 偏移重合副本), 避免破坏原 Part
+            opPattern(context, id + "copy", {
+                "entities" : definition.part,
+                "instanceType" : PatternType.TRANSLATION,
+                "numInstances" : 1,
+                "instanceSpacing" : 0 * millimeter
+            });
+            var partCopy = qCreatedBy(id + "copy", EntityType.BODY);
+
+            // 副本 ∩ slab = 切片(中间一段三维几何体)
+            opBoolean(context, id + "intersect", {
+                "tools" : slab,
+                "targets" : partCopy,
+                "operationType" : BooleanOperationType.INTERSECT
+            });
+
+            partToCount = partCopy;
+        }
+
         // ---------- 1. 自动找回转轴 -----------------------------------------
         // 找所有面, 尝试 evAxis 找圆柱面, 收集时去重(方向平行+原点共线视为同一个)
-        var allFaces = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.FACE));
+        var allFaces = evaluateQuery(context, qOwnedByBody(partToCount, EntityType.FACE));
 
         var axes = []; // 去重后的轴列表
         var counts = []; // 每根轴出现的次数
@@ -97,7 +216,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         var axisDir is Vector = bestAxis.direction;
 
         // ---------- 2. 几何中心 ---------------------------------------------
-        var bbox = evBox3d(context, { "topology" : definition.part });
+        var bbox = evBox3d(context, { "topology" : partToCount });
         var bboxCenter = (bbox.minCorner + bbox.maxCorner) / 2;
         // 修正轴 origin 的径向坐标: 用 bbox 中心的径向坐标替代
         // evAxis 返回的圆柱面轴 origin 可能偏离真正回转中心(如齿槽圆弧面),
@@ -106,7 +225,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         var center = axisOrigin + radialOffset; // 径向(XZ)=bboxCenter, 轴向(Y)=axisOrigin
 
         // ---------- 4. 全局径向采样 -----------------------------------------
-        var allEdges = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.EDGE));
+        var allEdges = evaluateQuery(context, qOwnedByBody(partToCount, EntityType.EDGE));
 
         if (size(allEdges) == 0)
             throw "No edges found, cannot sample.";
@@ -155,7 +274,7 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
         //   策略: 不能直接取全局maxR(会被凸缘占据). 改用半径直方图找"齿顶圆"半径:
         //   把顶点按半径分桶, 找顶点数最多的桶(齿尖顶点最多), 该桶半径=tipCircleR.
         //   凸缘顶点数少(每圈凸缘只有少量顶点), 不会主导直方图.
-        var allVertices = evaluateQuery(context, qOwnedByBody(definition.part, EntityType.VERTEX));
+        var allVertices = evaluateQuery(context, qOwnedByBody(partToCount, EntityType.VERTEX));
         var vertexPoints = [];
         var allAxials = [];
         for (var v in allVertices)
