@@ -31,7 +31,7 @@ function pointToAxisDistance(point is Vector, axisOrigin is Vector, axisDir is V
 
 // 从用户选择(面 or 封闭 edge) 获取平面
 // - 面: evPlane 直接取
-// - 边: 必须是封闭曲线(整圆 CIRCLE / 整椭圆 ELLIPSE), 用 evAxis 取轴构造平面
+// - 边: 用端点重合判断封闭性, 再用 evAxis 取轴构造平面
 function getPlaneFromSelection(context is Context, q is Query) returns Plane
 {
     var resolved = evaluateQuery(context, q);
@@ -49,19 +49,14 @@ function getPlaneFromSelection(context is Context, q is Query) returns Plane
     else if (size(edgeList) > 0)
     {
         var edge = edgeList[0];
-        var etype = evEdgeType(context, { "edge" : edge });
-        if (etype != EdgeType.CIRCLE && etype != EdgeType.ELLIPSE)
-            throw "Selected edge must be a closed curve (full circle or full ellipse). Got edge type: " ~ toString(etype);
-
+        // 封闭性: parameter=0 与 parameter=1 端点重合
+        var startPt = evEdgeTangentLine(context, { "edge" : edge, "parameter" : 0 }).origin;
+        var endPt = evEdgeTangentLine(context, { "edge" : edge, "parameter" : 1 }).origin;
+        if (norm(startPt - endPt) > 1e-6 * meter)
+            throw "Selected edge must be closed (endpoints differ by " ~ toString(norm(startPt - endPt)) ~ ").";
+        // 圆/椭圆边都有轴, 用轴构造平面
         var ax = evAxis(context, { "axis" : edge });
-        var normal = ax.direction;
-        var refX;
-        if (abs(normal[0]) < 0.9)
-            refX = normalize(cross(normal, vector(1, 0, 0)));
-        else
-            refX = normalize(cross(normal, vector(0, 1, 0)));
-        var refY = cross(normal, refX);
-        return plane(ax.origin, normal, refX, refY);
+        return plane(ax.origin, ax.direction);
     }
     else
     {
@@ -95,8 +90,8 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
     }
     {
         // ---------- 0. 切片(若勾选 Choose where to count) -----------------
-        // 用两个平行平面切 Part, 取中间薄片(副本) 数齿.
-        // 不破坏原 Part: 先 opPattern 复制, 再对副本 INTERSECT 一个 slab.
+        // 用两个平行平面切 Part, 取中间薄片数齿.
+        // 不破坏原 Part: opPattern 复制, opExtrude 造 slab, opBoolean INTERSECTION.
         var partToCount = definition.part;
 
         if (definition.chooseWhereToCount)
@@ -105,63 +100,58 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             var p2 = getPlaneFromSelection(context, definition.plane2);
 
             // 验证两平面平行
-            var nDot = dot(p1.normal, p2.normal);
-            if (abs(abs(nDot) - 1) > 1e-4)
+            if (abs(abs(dot(p1.normal, p2.normal)) - 1) > 1e-4)
                 throw "Two planes must be parallel. Normals: " ~ toString(p1.normal) ~ " vs " ~ toString(p2.normal);
 
-            // 统一法向(让 p2.normal 与 p1 同向)
-            var normal = p1.normal;
-            if (nDot < 0)
-                p2 = plane(p2.origin, -p2.normal, -p2.x, -p2.y);
+            // 统一法向: 让 p1.normal 指向 p2
+            var sep = dot(p2.origin - p1.origin, p1.normal);
+            if (sep < 0)
+                p1 = plane(p1.origin, -p1.normal);
+            sep = dot(p2.origin - p1.origin, p1.normal);
+            if (sep < 1e-6 * meter)
+                throw "Two planes coincide; cannot form a slice.";
 
-            // 沿 normal 的有向距离, 让 p1 在前 p2 在后
-            var dist1 = dot(p1.origin, normal);
-            var dist2 = dot(p2.origin, normal);
-            if (dist2 < dist1)
-            {
-                var tmpP = p1; p1 = p2; p2 = tmpP;
-                var tmpD = dist1; dist1 = dist2; dist2 = tmpD;
-            }
-            var slabThickness = dist2 - dist1;
-            if (slabThickness <= 0 * millimeter)
-                throw "Two planes coincide; cannot form a slab.";
-
-            // 在 p1 上创建大矩形草图, 覆盖整个 Part bbox
-            var bbox0 = evBox3d(context, { "topology" : definition.part });
-            var halfSize = norm(bbox0.maxCorner - bbox0.minCorner) + 10 * millimeter;
-            var sketchId = id + "sketch";
-            var sk = newSketchOnPlane(context, sketchId, { "sketchPlane" : p1 });
-            skRectangle(sk, "rect", {
-                "firstCorner" : vector(-halfSize, -halfSize),
-                "secondCorner" : vector(halfSize, halfSize)
-            });
-            skSolve(context, sketchId);
-
-            // 拉伸 slab: 从 p1 沿 normal 到 p2
-            opExtrude(context, id + "extrude", {
-                "entities" : qCreatedBy(sketchId, EntityType.FACE),
-                "direction" : normal,
-                "endHeight" : slabThickness
-            });
-            var slab = qCreatedBy(id + "extrude", EntityType.BODY);
-
-            // 复制 Part(0 偏移重合副本), 避免破坏原 Part
+            // 复制 Part (原地副本, 不破坏原 Part)
             opPattern(context, id + "copy", {
                 "entities" : definition.part,
-                "instanceType" : PatternType.TRANSLATION,
-                "numInstances" : 1,
-                "instanceSpacing" : 0 * millimeter
+                "transforms" : [identityTransform()],
+                "instanceNames" : ["partCopy"]
             });
             var partCopy = qCreatedBy(id + "copy", EntityType.BODY);
 
-            // 副本 ∩ slab = 切片(中间一段三维几何体)
+            // 造 slab: 在 p1 上画大矩形, 沿 p1.normal 拉伸 sep
+            var bbox0 = evBox3d(context, { "topology" : definition.part });
+            var halfSize = norm(bbox0.maxCorner - bbox0.minCorner) + 50 * millimeter;
+
+            var sketchId = id + "sketch";
+            var sk = newSketchOnPlane(context, sketchId, { "sketchPlane" : p1 });
+            skRectangle(sk, "rect", {
+                "firstCorner" : vector(-1, -1) * halfSize,
+                "secondCorner" : vector(1, 1) * halfSize
+            });
+            skSolve(sk);
+
+            opExtrude(context, id + "extrude", {
+                "entities" : qSketchRegion(sketchId),
+                "direction" : p1.normal,
+                "endBound" : BoundingType.BLIND,
+                "endDepth" : sep
+            });
+            var slab = qCreatedBy(id + "extrude", EntityType.BODY);
+
+            if (size(evaluateQuery(context, slab)) == 0)
+                throw "Slab creation failed: opExtrude produced no body.";
+
+            // 副本 ∩ slab = 两个平面之间的中间段
             opBoolean(context, id + "intersect", {
-                "tools" : slab,
-                "targets" : partCopy,
-                "operationType" : BooleanOperationType.INTERSECT
+                "tools" : qUnion([partCopy, slab]),
+                "operationType" : BooleanOperationType.INTERSECTION
             });
 
-            partToCount = partCopy;
+            partToCount = qCreatedBy(id + "intersect", EntityType.BODY);
+
+            if (size(evaluateQuery(context, partToCount)) == 0)
+                throw "Slice failed: intersection produced nothing.";
         }
 
         // ---------- 1. 自动找回转轴 -----------------------------------------
@@ -292,8 +282,23 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
 
         // 修正 center 的轴向坐标: 用顶点 axial 的中位数 = 零件轴向中位面
         // (axisOrigin 的轴向位置可能偏离零件中心, 导致对称点 ax' ≠ -ax)
-        var sortedAxials = sort(allAxials, function(a, b) { return (a - b) / meter; });
-        var axialMid = sortedAxials[floor(size(sortedAxials) / 2)];
+        // 但切片时不能用顶点中位数: 切片只保留中间段, 两侧顶点不对称, 中位数会偏移,
+        // 导致 center 轴向坐标错误, 后续所有角度/半径计算全部错位.
+        // 切片时用 bbox 中心的轴向坐标 (切片 bbox 对称, 中心 = 两切割平面中点).
+        if (size(allAxials) == 0)
+            throw "No vertices found on this part.";
+        var axialMid;
+        if (definition.chooseWhereToCount)
+        {
+            var sliceBbox = evBox3d(context, { "topology" : partToCount });
+            var sliceBboxCenter = (sliceBbox.minCorner + sliceBbox.maxCorner) / 2;
+            axialMid = dot(sliceBboxCenter - center, axisDir);
+        }
+        else
+        {
+            var sortedAxials = sort(allAxials, function(a, b) { return (a - b) / meter; });
+            axialMid = sortedAxials[floor(size(sortedAxials) / 2)];
+        }
         center = center + axialMid * axisDir; // 把中位面移到 ax=0
         // 重算所有顶点的 axial (相对新中位面)
         for (var i = 0; i < size(vertexPoints); i += 1)
@@ -619,6 +624,143 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             rectCorr = true;
         }
 
+        // ---------- 5e. 边采样径向剖面数齿(最终计数) -------------------------
+        // 顶点法对多齿数齿轮有原理性局限:
+        //   - 齿间gap(齿距-齿宽)与齿内gap量级接近, 阈值分不开
+        //   - 某齿顶点缺失会让maxGap翻倍, 阈值估计全错, 且该齿永远数不到
+        // 边采样不受顶点缺失影响(齿顶边仍在). 用径向剖面(每1°桶取最大半径):
+        //   1. 剖面恒定 → 顶部是连续环(法兰), 排除该半径带重算(最多排除3层)
+        //   2. 剖面在齿顶/齿根间振荡 → 滞回法数上升沿 = 齿数
+        var vertexTeeth = teeth;
+        var edgeTeeth = 0;
+        var ringExcluded = 0;
+        {
+            var NB = 360;
+            var exclLo = [];
+            var exclHi = [];
+            var profile = [];
+            var pLow = 0 * meter;
+            var pHigh = 0 * meter;
+            var profileValid = false;
+            for (var iter = 0; iter < 4 && !profileValid; iter += 1)
+            {
+                // 重算剖面(跳过已排除的半径带)
+                profile = [];
+                for (var i = 0; i < NB; i += 1)
+                    profile = append(profile, 0 * meter);
+                for (var s in allSampleData)
+                {
+                    var skip = false;
+                    for (var b = 0; b < size(exclLo); b += 1)
+                    {
+                        if (s.radius >= exclLo[b] && s.radius <= exclHi[b])
+                            skip = true;
+                    }
+                    if (!skip)
+                    {
+                        var angleDeg = s.angle / degree;
+                        if (angleDeg < 0) angleDeg += 360;
+                        var bIdx = floor(angleDeg) % NB;
+                        if (bIdx < 0) bIdx += NB;
+                        if (s.radius > profile[bIdx])
+                            profile[bIdx] = s.radius;
+                    }
+                }
+                // 非空桶的 5%/95% 分位(抗离群桶)
+                var pv = [];
+                for (var i = 0; i < NB; i += 1)
+                {
+                    if (profile[i] > 0 * meter)
+                        pv = append(pv, profile[i]);
+                }
+                if (size(pv) < NB * 0.5)
+                {
+                    profileValid = false; // 覆盖不足, 放弃
+                }
+                else
+                {
+                    var sortedPv = sort(pv, function(a, b) { return (a - b) / meter; });
+                    pLow = sortedPv[floor(size(sortedPv) * 0.05)];
+                    pHigh = sortedPv[floor(size(sortedPv) * 0.95)];
+                    if (pHigh - pLow > globalMaxR * 0.02)
+                    {
+                        profileValid = true; // 剖面有起伏 → 齿信号
+                    }
+                    else
+                    {
+                        // 剖面恒定 → 顶部是连续环(法兰等), 排除后重算
+                        var band = globalMaxR * 0.005;
+                        exclLo = append(exclLo, pHigh - band);
+                        exclHi = append(exclHi, pHigh + band);
+                        ringExcluded += 1;
+                    }
+                }
+            }
+            // 显著峰计数(prominence): 不要求谷回到绝对低阈值,
+            // 只要求峰相对两侧谷显著凸起(>30% range).
+            // 滞回绝对阈值会因齿侧边采样点抬高齿间剖面谷底而失效(相邻齿连通).
+            if (profileValid)
+            {
+                var prom = (pHigh - pLow) * 0.3;
+                // 从全局最小桶开始(首尾谷一致, 处理wrap)
+                var startIdx = -1;
+                var minV = 0 * meter;
+                for (var i = 0; i < NB; i += 1)
+                {
+                    if (profile[i] > 0 * meter && (startIdx < 0 || profile[i] < minV))
+                    {
+                        minV = profile[i];
+                        startIdx = i;
+                    }
+                }
+                if (startIdx >= 0)
+                {
+                    var inPeak = false; // 是否已确认显著上升
+                    var H = minV;       // 当前峰最高
+                    var L = minV;       // 当前谷最低
+                    var cnt = 0;
+                    for (var k = 0; k < NB; k += 1)
+                    {
+                        var b = (startIdx + k) % NB;
+                        var r = profile[b];
+                        if (r == 0 * meter)
+                            continue; // 空桶跳过
+                        if (!inPeak)
+                        {
+                            if (r > L + prom)
+                            {
+                                inPeak = true;
+                                H = r;
+                            }
+                            else if (r < L)
+                                L = r;
+                        }
+                        else
+                        {
+                            if (r > H)
+                                H = r;
+                            if (r < H - prom)
+                            {
+                                cnt += 1; // 一个显著峰结束
+                                inPeak = false;
+                                L = r;
+                            }
+                        }
+                    }
+                    // 收尾: 遍历结束仍处于峰态 → 最后一个峰的结束谷是起点(全局最小)
+                    if (inPeak && H - minV > prom)
+                        cnt += 1;
+                    edgeTeeth = cnt;
+                }
+            }
+        }
+        // 交叉验证: 边法与顶点法一致(差<=1) → 保持顶点法结果(与原版行为一致);
+        // 仅当两者显著分歧且边法有效时才采用边法(顶点法失效场景: 顶点缺失/多齿数阈值失灵).
+        if (edgeTeeth >= 3 && abs(edgeTeeth - vertexTeeth) > 1)
+            teeth = edgeTeeth;
+        else
+            teeth = vertexTeeth;
+
         // 校验: 大gap平均值应接近 360/teeth
         var expectedGap = 360 / teeth;
         var bigGaps = bigGapCount;
@@ -641,6 +783,9 @@ export const countTeeth = defineFeature(function(context is Context, id is Id, d
             ~ " | RectCorr: " ~ toString(rectCorr)
             ~ " | HighBigGaps: " ~ toString(highBigGaps)
             ~ " | LowBigGaps: " ~ toString(lowBigGaps)
+            ~ " | VertexTeeth: " ~ toString(vertexTeeth)
+            ~ " | EdgeTeeth: " ~ toString(edgeTeeth)
+            ~ " | RingExcluded: " ~ toString(ringExcluded)
             ~ " | Edges: " ~ toString(size(allEdges));
 
         reportFeatureInfo(context, id, diagMsg);
