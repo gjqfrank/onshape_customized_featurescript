@@ -119,7 +119,7 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         "fillLength" : 20 * millimeter,
         "pulleyCount" : 2,
         "toothProfile" : ToothProfile.GT2_3M,
-        "flangeThickness" : 1 * millimeter,
+        "flangeThickness" : 2 * millimeter,
         "flangeOverhang" : 1 * millimeter,
         "customShaftDia" : false,
         "shaftDiameter" : 10 * millimeter,
@@ -617,8 +617,8 @@ const CTC_BOUNDS =
 
 const FLANGE_T_BOUNDS =
 {
-            (millimeter) : [0.2, 1, 20],
-            (inch) : 0.04
+            (millimeter) : [0.2, 2, 20],
+            (inch) : 0.08
         } as LengthBoundSpec;
 
 const FLANGE_O_BOUNDS =
