@@ -457,7 +457,7 @@ function makeFlange(context is Context, id is Id, center is Vector, axis is Vect
 
     // 截面轮廓（x = 沿 xDir 的轴向距离，y = 半径），y=0 边位于旋转轴上
     var points;
-    if (rOuter > rFace and rOuter - rFace < ft)
+    if (rOuter > rFace && rOuter - rFace < ft)
     {
         // 挡边：45 度锥面升起段（轴向 = 径向升高量）+ 保持段（锥形墙立住超过齿顶）
         const rise = rOuter - rFace;
