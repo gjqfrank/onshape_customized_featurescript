@@ -858,12 +858,14 @@ const ToothProfileDefinitions = {
             "FT" : 3 * millimeter,
             "FH" : 2 * millimeter
         },
+        // HTD 齿形：节距 / 齿深 / PLD / 法兰为 HTD 标准；R1/R2/R3/b 取与
+        // GT 解析公式几何约束自洽的比例（近似齿形，避免 sqrt 负值 NaN）
         (ToothProfile.HTD_3M) : {
             "P" : 3 * millimeter,
             "R1" : 0.3 * millimeter,
-            "R2" : 1.3 * millimeter,
-            "R3" : 0.9 * millimeter,
-            "b" : 0.76 * millimeter,
+            "R2" : 1.52 * millimeter,
+            "R3" : 0.85 * millimeter,
+            "b" : 0.7 * millimeter,
             "H" : 2.4 * millimeter,
             "h" : 1.28 * millimeter,
             "i" : 1.4 * millimeter,
@@ -874,13 +876,13 @@ const ToothProfileDefinitions = {
         (ToothProfile.HTD_5M) : {
             "P" : 5 * millimeter,
             "R1" : 0.5 * millimeter,
-            "R2" : 2.16 * millimeter,
-            "R3" : 1.5 * millimeter,
-            "b" : 1.27 * millimeter,
+            "R2" : 2.53 * millimeter,
+            "R3" : 1.42 * millimeter,
+            "b" : 1.17 * millimeter,
             "H" : 4 * millimeter,
-            "h" : 2.06 * millimeter,
-            "i" : 2.3 * millimeter,
-            "PLD" : 0.572 * millimeter,
+            "h" : 2.13 * millimeter,
+            "i" : 2.33 * millimeter,
+            "PLD" : 0.635 * millimeter,
             "FT" : 2 * millimeter,
             "FH" : 1.2 * millimeter
         },
