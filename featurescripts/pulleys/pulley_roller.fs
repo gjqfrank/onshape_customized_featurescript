@@ -9,7 +9,7 @@ import(path : "onshape/std/common.fs", version : "3044.0");
  *   2. 从端面沿轴向延伸主轴，默认直径与管子外径相同（与圆环面外环平齐）
  *   3. 沿轴排布多个 GT2 同步带轮，每个带轮可独立设置齿数 / 节圆直径 / 宽度，
  *      相邻带轮中心距可精确控制；每个带轮两侧有锥形挡边（法兰）防止带滑落：
- *      贴带轮端面处与齿顶平齐，沿远离带轮方向锥形变宽，外端超过齿顶
+ *      从齿顶以约 45 度锥面升起超过齿顶并保持，立在齿顶上方的锥形墙
  *   4. 端面处一圈薄锥形底领：贴所选端面处最粗（盖住圆环面外环边），向外收拢到
  *      主轴直径；主轴保持该直径一直延伸到第一个带轮
  *   5. 全部新几何合并为单一零件（独立 part，不与原管子合并）
@@ -41,11 +41,11 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         definition.toothProfile is ToothProfile;
 
         annotation { "Name" : "Flange thickness",
-                     "Description" : "Conical edge flange on both sides of each pulley, keeps the belt from sliding off" }
+                     "Description" : "Axial thickness of the conical edge flange on both sides of each pulley" }
         isLength(definition.flangeThickness, FLANGE_T_BOUNDS);
 
         annotation { "Name" : "Flange overhang",
-                     "Description" : "How far the flange outer end exceeds the pulley tip radius" }
+                     "Description" : "How high the flange wall stands above the pulley tooth tips" }
         isLength(definition.flangeOverhang, FLANGE_O_BOUNDS);
 
         annotation { "Name" : "Custom shaft diameter",
@@ -321,21 +321,20 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     }
 
     // 4. 锥形挡边：每个带轮两侧各一圈：贴带轮端面处与齿顶平齐（tipR），
-    //    沿远离带轮方向锥形变宽到 tipR + overhang —— 外端超过齿顶，挡住带防止滑落
+    //    以约 45 度锥面升起超过齿顶（tipR + overhang）并保持到挡边外端 ——
+    //    立在齿顶上方的锥形墙，挡住带防止滑落（同 rollerstub 的法兰）
     for (var i = 0; i < n; i += 1)
     {
         const tipR = pulleyTipRadius(teeth[i], profile, pds[i]);
-        const flangeR = tipR + flangeOverhang; // 外端最粗半径（超过齿顶）
+        const flangeR = tipR + flangeOverhang; // 挡边墙半径（超过齿顶）
         const flangeIdL = id + ("flangeL" ~ toString(i));
         const flangeIdR = id + ("flangeR" ~ toString(i));
 
-        // 左侧挡边：从带轮左端面（z[i] - widths[i]/2）沿 -axis 方向伸出 ft 厚，
-        // 贴端面处 r = tipR，外端变宽到 flangeR
+        // 左侧挡边：从带轮左端面（z[i] - widths[i]/2）沿 -axis 方向伸出 ft 厚
         makeFlange(context, flangeIdL, center, axis, z[i] - widths[i] / 2, -axis, ft, tipR, flangeR);
         newBodies = append(newBodies, qCreatedBy(flangeIdL + "revolve", EntityType.BODY));
 
-        // 右侧挡边：从带轮右端面（z[i] + widths[i]/2）沿 axis 方向伸出 ft 厚，
-        // 贴端面处 r = tipR，外端变宽到 flangeR
+        // 右侧挡边：从带轮右端面（z[i] + widths[i]/2）沿 axis 方向伸出 ft 厚
         makeFlange(context, flangeIdR, center, axis, z[i] + widths[i] / 2, axis, ft, tipR, flangeR);
         newBodies = append(newBodies, qCreatedBy(flangeIdR + "revolve", EntityType.BODY));
     }
@@ -441,8 +440,12 @@ function pulleyTipRadius(t is number, profile is map, pd is ValueWithUnits) retu
 
 /**
  * 锥形挡边/底领（旋转成型）：
- *   起始于 zFace（轴向位置，贴带轮端面/所选端面），沿 xDir 方向伸出 ft 厚；
- *   zFace 处半径为 rFace，沿 xDir 锥形过渡到 rOuter（挡边向外变宽、底领向外收拢）。
+ *   起始于 zFace（轴向位置），沿 xDir 方向伸出 ft 厚。
+ *   挡边（rOuter > rFace，带轮两侧）：贴带轮端面处与齿顶平齐（rFace），
+ *     先以约 45 度锥面快速升起超过齿顶（升高 rOuter - rFace），之后保持
+ *     rOuter 直到挡边外端 —— 立在齿顶上方的锥形墙，挡住带防止滑落。
+ *   底领（rOuter < rFace，端面处）：贴端面处最粗 rFace（盖住圆环外边），
+ *     向外纯锥形收拢到 rOuter。
  * 截面草图放在过 center + axis*zFace、x 轴为 xDir 的平面上，绕轴线整周旋转。
  */
 function makeFlange(context is Context, id is Id, center is Vector, axis is Vector, zFace is ValueWithUnits, xDir is Vector, ft is ValueWithUnits, rFace is ValueWithUnits, rOuter is ValueWithUnits)
@@ -452,13 +455,30 @@ function makeFlange(context is Context, id is Id, center is Vector, axis is Vect
                 "sketchPlane" : plane(base, perpendicularVector(axis), xDir)
             });
 
-    // 截面多边形（x = 沿 xDir 从 zFace 向外的轴向距离，y = 半径），y=0 边位于旋转轴上
-    const points = [
-                vector(0 * millimeter, 0 * millimeter),
-                vector(0 * millimeter, rFace),
-                vector(ft, rOuter),
-                vector(ft, 0 * millimeter)
-            ];
+    // 截面轮廓（x = 沿 xDir 的轴向距离，y = 半径），y=0 边位于旋转轴上
+    var points;
+    if (rOuter > rFace and rOuter - rFace < ft)
+    {
+        // 挡边：45 度锥面升起段（轴向 = 径向升高量）+ 保持段（锥形墙立住超过齿顶）
+        const rise = rOuter - rFace;
+        points = [
+                    vector(0 * millimeter, 0 * millimeter),
+                    vector(0 * millimeter, rFace),
+                    vector(rise, rOuter),
+                    vector(ft, rOuter),
+                    vector(ft, 0 * millimeter)
+                ];
+    }
+    else
+    {
+        // 纯锥形：底领向外收拢，或升高量超过厚度时挡边为全锥
+        points = [
+                    vector(0 * millimeter, 0 * millimeter),
+                    vector(0 * millimeter, rFace),
+                    vector(ft, rOuter),
+                    vector(ft, 0 * millimeter)
+                ];
+    }
 
     for (var j = 0; j < size(points); j += 1)
     {
@@ -623,7 +643,7 @@ const FLANGE_T_BOUNDS =
 
 const FLANGE_O_BOUNDS =
 {
-            (millimeter) : [0, 1, 20],
+            (millimeter) : [0.2, 1, 20],
             (inch) : 0.04
         } as LengthBoundSpec;
 
