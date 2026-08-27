@@ -286,13 +286,15 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     }
     for (var i = 1; i < n; i += 1)
     {
-        // 仅要求齿区不重叠；法兰允许最高边重合甚至交叠（交叠部分由布尔合并
-        // 自动融合），间距为正时才生成法兰间的填充圆柱
-        if (z[i] - z[i - 1] < (widths[i] + widths[i - 1]) / 2)
+        // 法兰允许外端面恰好重合（交于一个圆环，体积交叠为零），但不允许
+        // 真正交叠：最小 CTC = 半宽之和 + 2 倍较大法兰厚度（此时两法兰外
+        // 端面共面，中间无间隙、无需填充圆柱）
+        const ftIface = max(fts[i - 1], fts[i]);
+        if (z[i] - z[i - 1] < (widths[i] + widths[i - 1]) / 2 + 2 * ftIface - TOLERANCE.zeroLength)
         {
             throw regenError("带轮 " ~ toString(i) ~ " 与带轮 " ~ toString(i + 1)
-                    ~ " 中心距太小，齿区重叠。最小值（齿端面贴合）为 "
-                    ~ toString((widths[i] + widths[i - 1]) / 2) ~ "。", ["ctc" ~ toString(i)]);
+                    ~ " 中心距太小，法兰交叠。最小值（两法兰外端面恰好重合）为 "
+                    ~ toString((widths[i] + widths[i - 1]) / 2 + 2 * ftIface) ~ "。", ["ctc" ~ toString(i)]);
         }
     }
     for (var i = 0; i < n; i += 1)
