@@ -643,7 +643,7 @@ const FLANGE_T_BOUNDS =
 
 const FLANGE_O_BOUNDS =
 {
-            (millimeter) : [0.2, 1, 20],
+            (millimeter) : [0, 1, 20],
             (inch) : 0.04
         } as LengthBoundSpec;
 
