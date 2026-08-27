@@ -9,11 +9,11 @@ import(path : "onshape/std/common.fs", version : "3044.0");
  *   2. 从端面沿轴向延伸主轴，默认直径与管子外径相同（与圆环面外环平齐）
  *   3. 沿轴排布多个同步带轮，每个带轮可独立设置齿形标准（GT2 2M/3M/5M/8M、
  *      HTD 3M/5M 共六种）/ 齿数 / 节圆直径 / 宽度，相邻带轮中心距可精确控制；
- *      每个带轮两侧有锥形挡边（法兰）防止带滑落，尺寸与 COTS 标准法兰带轮
- *      一致（按齿形标准固定，见 ToothProfileDefinitions 的 FT/FH）：从齿顶
- *      锥形升起超过齿顶并保持，立在齿顶上方的锥形墙。相邻两带轮之间的接口：
- *      法兰直径取两者较大值（厚度各保持自身 COTS 值），两法兰之间用同直径
- *      圆柱填充
+ *      每个带轮两侧有挡边（法兰）防止带滑落，样式可选（Flange style）：
+ *      锥形（默认，COTS 标准尺寸）：从齿顶锥形升起超过齿顶并保持；
+ *      平圆柱：固定 1mm 厚、直径为法兰直径（> 齿顶）的圆柱。相邻两带轮
+ *      之间的接口：法兰直径取两者较大值（厚度各保持生效值），两法兰之间
+ *      用同直径圆柱填充
  *   4. 端面底领：贴端面先是固定 1mm 厚的圆柱（盖住圆环面外环边），再以
  *      最厚 2mm 的锥体收拢到带轮 1 法兰直径；之后以该直径的圆柱引导段一直
  *      延伸到带轮 1 的法兰（平齐衔接）。底领 + 引导段 + 管内填充与其余
@@ -138,6 +138,7 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         "profile2" : ToothProfile.GT2_3M,
         "profile3" : ToothProfile.GT2_3M,
         "profile4" : ToothProfile.GT2_3M,
+        "flangeStyle" : FlangeStyle.CONICAL,
         "flangeOverhang" : 1 * millimeter,
         "customShaftDia" : false,
         "shaftDiameter" : 10 * millimeter,
@@ -266,6 +267,15 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         flangeRs = append(flangeRs, tipRs[i] + p["FH"]);
     }
 
+    // 法兰样式生效厚度：锥形样式用各齿形 COTS 值；平圆柱样式统一为固定
+    // 1mm 厚（直径不变，仍为法兰直径 > 齿顶）
+    const flatFlange = definition.flangeStyle == FlangeStyle.FLAT_CYLINDER;
+    var effFts = [];
+    for (var i = 0; i < n; i += 1)
+    {
+        effFts = append(effFts, flatFlange ? FLAT_FLANGE_LEN : fts[i]);
+    }
+
     // 计算各带轮中心 z 位置（centers[0] 为面到带轮 1 中心，其后为相邻中心距增量）
     var z = [centers[0]];
     for (var i = 1; i < n; i += 1)
@@ -273,11 +283,11 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         z = append(z, z[i - 1] + centers[i]);
     }
 
-    // 校验：带轮（含 COTS 法兰）不得伸进管子、不得相互重叠、齿根必须粗于主轴
-    if (z[0] < widths[0] / 2 + fts[0])
+    // 校验：带轮（含法兰）不得伸进管子、不得相互重叠、齿根必须粗于主轴
+    if (z[0] < widths[0] / 2 + effFts[0])
     {
         throw regenError("Pulley 1 center offset 太小（不小于带宽一半 + 法兰厚度，即 "
-                ~ toString(widths[0] / 2 + fts[0]) ~ "），否则左侧法兰会伸进管子。", ["offset1"]);
+                ~ toString(widths[0] / 2 + effFts[0]) ~ "），否则左侧法兰会伸进管子。", ["offset1"]);
     }
     // 底领（圆柱 + 锥体收拢段）必须在带轮 1 端面之前完成，避免盖住齿形
     if (z[0] - widths[0] / 2 < COLLAR_CYL_LEN + COLLAR_CONE_LEN)
@@ -290,7 +300,7 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         // 法兰允许外端面恰好重合（交于一个圆环，体积交叠为零），但不允许
         // 真正交叠：接口法兰直径取两者较大值、厚度各保持自身 COTS 值，
         // 最小 CTC = 半宽之和 + 两侧法兰各自厚度（此时两法兰外端面共面）
-        const minCtc = (widths[i] + widths[i - 1]) / 2 + fts[i - 1] + fts[i];
+        const minCtc = (widths[i] + widths[i - 1]) / 2 + effFts[i - 1] + effFts[i];
         if (z[i] - z[i - 1] < minCtc - 1e-6 * meter)
         {
             throw regenError("带轮 " ~ toString(i) ~ " 与带轮 " ~ toString(i + 1)
@@ -308,8 +318,8 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         }
     }
 
-    // 主轴长度 = 最后一个带轮末端 + 右侧 COTS 法兰
-    const totalLen = z[n - 1] + widths[n - 1] / 2 + fts[n - 1];
+    // 主轴长度 = 最后一个带轮末端 + 右侧法兰
+    const totalLen = z[n - 1] + widths[n - 1] / 2 + effFts[n - 1];
 
     var newBodies = [];
 
@@ -385,40 +395,42 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         newBodies = append(newBodies, qCreatedBy(id + ("pulleyExtrude" ~ toString(i)), EntityType.BODY));
     }
 
-    // 4. 锥形法兰（旋转成型）：
+    // 4. 法兰（旋转成型，样式可选）：
+    //    - 锥形（默认）：COTS 尺寸，贴带轮端面处与齿顶平齐，锥形升起超过
+    //      齿顶并保持
+    //    - 平圆柱：固定 1mm 厚、直径为法兰直径（> 齿顶）的圆柱
     //    - pulley 1 左侧 / 最后一个 pulley 右侧：各自 COTS 标准尺寸
-    //      （贴带轮端面处与齿顶平齐，锥形升起超过齿顶并保持）
     //    - 相邻两个 pulley 之间的接口：若一侧法兰更大，另一侧法兰也采用
-    //      该更大尺寸（半径与厚度均取两者较大值），两个法兰之间用与法兰
-    //      同直径的圆柱填充，形成连续过渡
+    //      该更大尺寸（半径取两者较大值），两个法兰之间用与法兰同直径的
+    //      圆柱填充，形成连续过渡
     for (var i = 0; i < n; i += 1)
     {
         if (i == 0)
         {
             // pulley 1 左侧法兰（自身 COTS 尺寸）
             const flangeIdL = id + "flangeL0";
-            makeFlange(context, flangeIdL, center, axis, z[0] - widths[0] / 2, -axis, fts[0], tipRs[0], flangeRs[0]);
+            makeFlange(context, flangeIdL, center, axis, z[0] - widths[0] / 2, -axis, effFts[0], tipRs[0], flangeRs[0], flatFlange);
             newBodies = append(newBodies, qCreatedBy(flangeIdL + "revolve", EntityType.BODY));
         }
 
         if (i < n - 1)
         {
-            // 接口 i-(i+1)：法兰直径取两者较大值，厚度各保持自身 COTS 值
+            // 接口 i-(i+1)：法兰直径取两者较大值，厚度各保持生效值
             const frIface = max(flangeRs[i], flangeRs[i + 1]);
 
-            // 带轮 i 右侧法兰：从右端面沿 +axis 伸出 fts[i] 厚
+            // 带轮 i 右侧法兰：从右端面沿 +axis 伸出 effFts[i] 厚
             const flangeIdR = id + ("flangeR" ~ toString(i));
-            makeFlange(context, flangeIdR, center, axis, z[i] + widths[i] / 2, axis, fts[i], tipRs[i], frIface);
+            makeFlange(context, flangeIdR, center, axis, z[i] + widths[i] / 2, axis, effFts[i], tipRs[i], frIface, flatFlange);
             newBodies = append(newBodies, qCreatedBy(flangeIdR + "revolve", EntityType.BODY));
 
-            // 带轮 i+1 左侧法兰：从左端面沿 -axis 伸出 fts[i+1] 厚
+            // 带轮 i+1 左侧法兰：从左端面沿 -axis 伸出 effFts[i+1] 厚
             const flangeIdL = id + ("flangeL" ~ toString(i + 1));
-            makeFlange(context, flangeIdL, center, axis, z[i + 1] - widths[i + 1] / 2, -axis, fts[i + 1], tipRs[i + 1], frIface);
+            makeFlange(context, flangeIdL, center, axis, z[i + 1] - widths[i + 1] / 2, -axis, effFts[i + 1], tipRs[i + 1], frIface, flatFlange);
             newBodies = append(newBodies, qCreatedBy(flangeIdL + "revolve", EntityType.BODY));
 
             // 填充圆柱：与接口法兰同直径，位于两个法兰外端面之间
-            const cylStart = z[i] + widths[i] / 2 + fts[i];
-            const cylLen = z[i + 1] - widths[i + 1] / 2 - fts[i + 1] - cylStart;
+            const cylStart = z[i] + widths[i] / 2 + effFts[i];
+            const cylLen = z[i + 1] - widths[i + 1] / 2 - effFts[i + 1] - cylStart;
             if (cylLen > 0 * millimeter)
             {
                 const gapSketch = newSketchOnPlane(context, id + ("gapSketch" ~ toString(i)), {
@@ -442,7 +454,7 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         {
             // 最后一个 pulley 右侧法兰（自身 COTS 尺寸）
             const flangeIdR = id + ("flangeR" ~ toString(i));
-            makeFlange(context, flangeIdR, center, axis, z[i] + widths[i] / 2, axis, fts[i], tipRs[i], flangeRs[i]);
+            makeFlange(context, flangeIdR, center, axis, z[i] + widths[i] / 2, axis, effFts[i], tipRs[i], flangeRs[i], flatFlange);
             newBodies = append(newBodies, qCreatedBy(flangeIdR + "revolve", EntityType.BODY));
         }
     }
@@ -548,14 +560,16 @@ function pulleyTipRadius(t is number, profile is map, pd is ValueWithUnits) retu
 }
 
 /**
- * 带轮锥形法兰（旋转成型）：
+ * 带轮法兰（旋转成型）：
  *   起始于 zFace（轴向位置，贴带轮端面），沿 xDir 方向伸出 ft 厚。
- *   贴带轮端面处与齿顶平齐（rFace），先以约 45 度锥面快速升起超过齿顶
- *   （升高 rOuter - rFace），之后保持 rOuter 直到法兰外端 —— 立在齿顶
- *   上方的锥形墙，挡住带防止滑落。
+ *   - 锥形样式（默认）：贴带轮端面处与齿顶平齐（rFace），先以约 45 度锥面
+ *     快速升起超过齿顶（升高 rOuter - rFace），之后保持 rOuter 直到法兰
+ *     外端 —— 立在齿顶上方的锥形墙，挡住带防止滑落
+ *   - 平圆柱样式（flat = true）：直径为法兰直径 rOuter（> 齿顶）的圆柱，
+ *     厚度 ft（固定 1mm），替代锥形墙
  * 截面草图放在过 center + axis*zFace、x 轴为 xDir 的平面上，绕轴线整周旋转。
  */
-function makeFlange(context is Context, id is Id, center is Vector, axis is Vector, zFace is ValueWithUnits, xDir is Vector, ft is ValueWithUnits, rFace is ValueWithUnits, rOuter is ValueWithUnits)
+function makeFlange(context is Context, id is Id, center is Vector, axis is Vector, zFace is ValueWithUnits, xDir is Vector, ft is ValueWithUnits, rFace is ValueWithUnits, rOuter is ValueWithUnits, flat is boolean)
 {
     const base = center + axis * zFace;
     const sk = newSketchOnPlane(context, id + "sketch", {
@@ -564,7 +578,17 @@ function makeFlange(context is Context, id is Id, center is Vector, axis is Vect
 
     // 截面轮廓（x = 沿 xDir 的轴向距离，y = 半径），y=0 边位于旋转轴上
     var points;
-    if (rOuter > rFace && rOuter - rFace < ft)
+    if (flat)
+    {
+        // 平圆柱：整段保持 rOuter（> 齿顶）
+        points = [
+                    vector(0 * millimeter, 0 * millimeter),
+                    vector(0 * millimeter, rOuter),
+                    vector(ft, rOuter),
+                    vector(ft, 0 * millimeter)
+                ];
+    }
+    else if (rOuter > rFace && rOuter - rFace < ft)
     {
         // 法兰：45 度锥面升起段（轴向 = 径向升高量）+ 保持段（锥形墙立住超过齿顶）
         const rise = rOuter - rFace;
@@ -783,6 +807,20 @@ const CTC_BOUNDS =
 // 端面底领尺寸（固定）：圆柱段轴向厚度 1mm，锥体收拢段最厚 2mm
 const COLLAR_CYL_LEN = 1 * millimeter;
 const COLLAR_CONE_LEN = 2 * millimeter;
+
+// 平圆柱法兰样式（固定）：轴向厚度 1mm，直径为法兰直径（> 齿顶）
+const FLAT_FLANGE_LEN = 1 * millimeter;
+
+/**
+ * 带轮法兰样式：锥形墙（COTS 标准，默认）或平圆柱（1mm 厚）。
+ */
+export enum FlangeStyle
+{
+    annotation { "Name" : "Conical (COTS)" }
+    CONICAL,
+    annotation { "Name" : "Flat cylinder (1mm)" }
+    FLAT_CYLINDER
+}
 
 const FLANGE_O_BOUNDS =
 {
