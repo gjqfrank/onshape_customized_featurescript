@@ -11,9 +11,10 @@ import(path : "onshape/std/common.fs", version : "3044.0");
  *      相邻带轮中心距可精确控制；每个带轮两侧有锥形挡边（法兰）防止带滑落，
  *      尺寸与 COTS 标准法兰带轮一致（按齿形标准固定，见 ToothProfileDefinitions
  *      的 FT/FH）：从齿顶锥形升起超过齿顶并保持，立在齿顶上方的锥形墙
- *   4. 端面处一圈薄锥形底领：贴所选端面处最粗（超出量 = End collar overhang，
- *      可为 0），向外收拢到带轮 1 法兰直径；之后以该直径的圆柱引导段一直
- *      延伸到带轮 1 的法兰（与法兰平齐衔接）
+ *   4. 端面底领：贴端面先是厚度 End collar thickness（默认 1mm）的圆柱
+ *      （盖住圆环面外环边），再以最厚 2mm 的锥体收拢到带轮 1 法兰直径；
+ *      之后以该直径的圆柱引导段一直延伸到带轮 1 的法兰（平齐衔接）。
+ *      底领 + 引导段 + 管内填充与其余新几何全部合并为一个 part
  *   5. 全部新几何合并为单一零件（独立 part，不与原管子合并）
  *
  * 齿形解析公式来自 trilobio 的 "Timing Belt Pulley"（GT2-2M / GT2-3M）。
@@ -43,7 +44,7 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         definition.toothProfile is ToothProfile;
 
         annotation { "Name" : "End collar thickness",
-                     "Description" : "Axial thickness of the thin conical collar at the selected end face" }
+                     "Description" : "Axial length of the straight cylinder at the selected end face, before the max-2mm taper down to the pulley-1 flange diameter" }
         isLength(definition.flangeThickness, FLANGE_T_BOUNDS);
 
         annotation { "Name" : "End collar overhang",
@@ -121,7 +122,7 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         "fillLength" : 20 * millimeter,
         "pulleyCount" : 2,
         "toothProfile" : ToothProfile.GT2_3M,
-        "flangeThickness" : 2 * millimeter,
+        "flangeThickness" : 1 * millimeter,
         "flangeOverhang" : 1 * millimeter,
         "customShaftDia" : false,
         "shaftDiameter" : 10 * millimeter,
@@ -248,6 +249,12 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         throw regenError("Pulley 1 center offset 太小（不小于带宽一半 + 法兰厚度，即 "
                 ~ toString(widths[0] / 2 + FT) ~ "），否则左侧法兰会伸进管子。", ["offset1"]);
     }
+    // 底领（圆柱 + 锥体收拢段）必须在带轮 1 端面之前完成，避免盖住齿形
+    if (z[0] - widths[0] / 2 < ft + COLLAR_CONE_LEN)
+    {
+        throw regenError("Pulley 1 center offset 太小：端面底领（圆柱 + 锥体）需在带轮 1 之前完成收拢，最小 offset ≈ "
+                ~ toString(widths[0] / 2 + ft + COLLAR_CONE_LEN) ~ "。", ["offset1"]);
+    }
     for (var i = 1; i < n; i += 1)
     {
         if (z[i] - z[i - 1] < (widths[i] + widths[i - 1]) / 2 + 2 * FT)
@@ -365,12 +372,12 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         newBodies = append(newBodies, qCreatedBy(flangeIdR + "revolve", EntityType.BODY));
     }
 
-    // 5. 底领：贴所选端面处最粗（半径 = max(外环半径, 带轮1法兰半径) + collarOverhang，
-    //    盖住圆环面外环边；overhang = 0 时与带轮1法兰平齐），向外锥形收拢到
-    //    带轮 1 法兰半径，之后引导段保持该直径直到带轮 1 法兰
-    const collarFace = max(outerR, leadR) + collarOverhang; // 贴端面处最粗半径
+    // 5. 底领：贴端面先是轴向厚度 ft 的圆柱（半径 collarFace，盖住圆环面外环边），
+    //    再以最厚 COLLAR_CONE_LEN（2mm）的锥体收拢到带轮 1 法兰半径 leadR；
+    //    之后引导段保持 leadR 直到带轮 1 法兰
+    const collarFace = max(outerR, leadR) + collarOverhang; // 圆柱段半径
     const collarId = id + "collar";
-    makeFlange(context, collarId, center, axis, 0 * millimeter, axis, ft, collarFace, leadR);
+    makeCollar(context, collarId, center, axis, ft, COLLAR_CONE_LEN, collarFace, leadR);
     newBodies = append(newBodies, qCreatedBy(collarId + "revolve", EntityType.BODY));
 
     // 6. 合并：新几何（填充 + 主轴 + 各带轮 + 挡边 + 底领）合并为单一零件，不与原管子合并
@@ -466,13 +473,11 @@ function pulleyTipRadius(t is number, profile is map, pd is ValueWithUnits) retu
 }
 
 /**
- * 锥形挡边/底领（旋转成型）：
- *   起始于 zFace（轴向位置），沿 xDir 方向伸出 ft 厚。
- *   挡边（rOuter > rFace，带轮两侧）：贴带轮端面处与齿顶平齐（rFace），
- *     先以约 45 度锥面快速升起超过齿顶（升高 rOuter - rFace），之后保持
- *     rOuter 直到挡边外端 —— 立在齿顶上方的锥形墙，挡住带防止滑落。
- *   底领（rOuter < rFace，端面处）：贴端面处最粗 rFace（盖住圆环外边），
- *     向外纯锥形收拢到 rOuter。
+ * 带轮锥形法兰（旋转成型）：
+ *   起始于 zFace（轴向位置，贴带轮端面），沿 xDir 方向伸出 ft 厚。
+ *   贴带轮端面处与齿顶平齐（rFace），先以约 45 度锥面快速升起超过齿顶
+ *   （升高 rOuter - rFace），之后保持 rOuter 直到法兰外端 —— 立在齿顶
+ *   上方的锥形墙，挡住带防止滑落。
  * 截面草图放在过 center + axis*zFace、x 轴为 xDir 的平面上，绕轴线整周旋转。
  */
 function makeFlange(context is Context, id is Id, center is Vector, axis is Vector, zFace is ValueWithUnits, xDir is Vector, ft is ValueWithUnits, rFace is ValueWithUnits, rOuter is ValueWithUnits)
@@ -486,7 +491,7 @@ function makeFlange(context is Context, id is Id, center is Vector, axis is Vect
     var points;
     if (rOuter > rFace && rOuter - rFace < ft)
     {
-        // 挡边：45 度锥面升起段（轴向 = 径向升高量）+ 保持段（锥形墙立住超过齿顶）
+        // 法兰：45 度锥面升起段（轴向 = 径向升高量）+ 保持段（锥形墙立住超过齿顶）
         const rise = rOuter - rFace;
         points = [
                     vector(0 * millimeter, 0 * millimeter),
@@ -498,7 +503,7 @@ function makeFlange(context is Context, id is Id, center is Vector, axis is Vect
     }
     else
     {
-        // 纯锥形：底领向外收拢，或升高量超过厚度时挡边为全锥
+        // 纯锥形：升高量超过厚度时法兰为全锥（正常 COTS 值不会走到该分支）
         points = [
                     vector(0 * millimeter, 0 * millimeter),
                     vector(0 * millimeter, rFace),
@@ -506,6 +511,43 @@ function makeFlange(context is Context, id is Id, center is Vector, axis is Vect
                     vector(ft, 0 * millimeter)
                 ];
     }
+
+    for (var j = 0; j < size(points); j += 1)
+    {
+        skLineSegment(sk, "l" ~ toString(j), {
+                    "start" : points[j],
+                    "end" : points[(j + 1) % size(points)]
+                });
+    }
+    skSolve(sk);
+
+    opRevolve(context, id + "revolve", {
+                "entities" : qCreatedBy(id + "sketch", EntityType.FACE),
+                "axis" : line(center, axis),
+                "angleForward" : 360 * degree
+            });
+}
+
+/**
+ * 端面底领（旋转成型）：贴所选端面先是轴向厚度 cylLen 的圆柱（半径 rFace，
+ * 盖住圆环面外环边），随后锥体在轴向 coneLen（最厚 2mm）内收拢到 rOuter
+ * （带轮 1 法兰半径），与引导段圆柱平齐衔接；之后引导段保持 rOuter 直到
+ * 带轮 1 法兰。截面草图放在过 center、法向为 axis 的平面上，绕轴线整周旋转。
+ */
+function makeCollar(context is Context, id is Id, center is Vector, axis is Vector, cylLen is ValueWithUnits, coneLen is ValueWithUnits, rFace is ValueWithUnits, rOuter is ValueWithUnits)
+{
+    const sk = newSketchOnPlane(context, id + "sketch", {
+                "sketchPlane" : plane(center, axis)
+            });
+
+    // 截面轮廓（x = 沿 axis 的轴向距离，y = 半径），y=0 边位于旋转轴上
+    const points = [
+                vector(0 * millimeter, 0 * millimeter),
+                vector(0 * millimeter, rFace),
+                vector(cylLen, rFace),
+                vector(cylLen + coneLen, rOuter),
+                vector(cylLen + coneLen, 0 * millimeter)
+            ];
 
     for (var j = 0; j < size(points); j += 1)
     {
@@ -664,9 +706,12 @@ const CTC_BOUNDS =
 
 const FLANGE_T_BOUNDS =
 {
-            (millimeter) : [0.2, 2, 20],
-            (inch) : 0.08
+            (millimeter) : [0.2, 1, 20],
+            (inch) : 0.04
         } as LengthBoundSpec;
+
+// 端面底领锥体收拢段的轴向长度上限（最厚 2mm）
+const COLLAR_CONE_LEN = 2 * millimeter;
 
 const FLANGE_O_BOUNDS =
 {
