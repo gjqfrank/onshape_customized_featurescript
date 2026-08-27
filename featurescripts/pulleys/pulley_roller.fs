@@ -538,7 +538,7 @@ function makeFlange(context is Context, id is Id, center is Vector, axis is Vect
 function makeCollar(context is Context, id is Id, center is Vector, axis is Vector, cylLen is ValueWithUnits, coneLen is ValueWithUnits, rFace is ValueWithUnits, rOuter is ValueWithUnits)
 {
     const sk = newSketchOnPlane(context, id + "sketch", {
-                "sketchPlane" : plane(center, axis, perpendicularVector(axis))
+                "sketchPlane" : plane(center, perpendicularVector(axis), axis)
             });
 
     // 截面轮廓（x = 沿 axis 的轴向距离，y = 半径），y=0 边位于旋转轴上
