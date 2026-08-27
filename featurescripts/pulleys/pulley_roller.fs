@@ -8,10 +8,12 @@ import(path : "onshape/std/common.fs", version : "3044.0");
  *   1. 按输入长度填充管子内孔（从所选端面向管内）
  *   2. 从端面沿轴向延伸主轴，默认直径与管子外径相同（与圆环面外环平齐）
  *   3. 沿轴排布多个 GT2 同步带轮，每个带轮可独立设置齿数 / 节圆直径 / 宽度，
- *      相邻带轮中心距可精确控制；每个带轮两侧有锥形挡边（法兰）防止带滑落：
- *      从齿顶以约 45 度锥面升起超过齿顶并保持，立在齿顶上方的锥形墙
- *   4. 端面处一圈薄锥形底领：贴所选端面处最粗（盖住圆环面外环边），向外收拢到
- *      主轴直径；主轴保持该直径一直延伸到第一个带轮
+ *      相邻带轮中心距可精确控制；每个带轮两侧有锥形挡边（法兰）防止带滑落，
+ *      尺寸与 COTS 标准法兰带轮一致（按齿形标准固定，见 ToothProfileDefinitions
+ *      的 FT/FH）：从齿顶锥形升起超过齿顶并保持，立在齿顶上方的锥形墙
+ *   4. 端面处一圈薄锥形底领：贴所选端面处最粗（盖住圆环面外环边，超出量 =
+ *      End collar overhang，可为 0 表示平齐），向外收拢到主轴直径；
+ *      主轴保持该直径一直延伸到第一个带轮
  *   5. 全部新几何合并为单一零件（独立 part，不与原管子合并）
  *
  * 齿形解析公式来自 trilobio 的 "Timing Belt Pulley"（GT2-2M / GT2-3M）。
@@ -40,12 +42,12 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         annotation { "Name" : "Tooth profile" }
         definition.toothProfile is ToothProfile;
 
-        annotation { "Name" : "Flange thickness",
-                     "Description" : "Axial thickness of the conical edge flange on both sides of each pulley" }
+        annotation { "Name" : "End collar thickness",
+                     "Description" : "Axial thickness of the thin conical collar at the selected end face" }
         isLength(definition.flangeThickness, FLANGE_T_BOUNDS);
 
-        annotation { "Name" : "Flange overhang",
-                     "Description" : "How high the flange wall stands above the pulley tooth tips" }
+        annotation { "Name" : "End collar overhang",
+                     "Description" : "How far the collar extends beyond the tube outer radius at the end face (0 = flush). Pulley flanges use COTS standard sizes" }
         isLength(definition.flangeOverhang, FLANGE_O_BOUNDS);
 
         annotation { "Name" : "Custom shaft diameter",
@@ -227,9 +229,11 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
 
     const n = size(teeth);
 
-    // 挡边（法兰）参数
+    // 底领参数（仅作用于端面底领）；带轮法兰用 COTS 标准值（profile 的 FT/FH）
     const ft = definition.flangeThickness;
-    const flangeOverhang = definition.flangeOverhang;
+    const collarOverhang = definition.flangeOverhang;
+    const FT = profile["FT"];
+    const FH = profile["FH"];
 
     // 计算各带轮中心 z 位置（centers[0] 为面到带轮 1 中心，其后为相邻中心距增量）
     var z = [centers[0]];
@@ -238,19 +242,19 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         z = append(z, z[i - 1] + centers[i]);
     }
 
-    // 校验：带轮（含挡边）不得伸进管子、不得相互重叠、齿根必须粗于主轴
-    if (z[0] < widths[0] / 2 + ft)
+    // 校验：带轮（含 COTS 法兰）不得伸进管子、不得相互重叠、齿根必须粗于主轴
+    if (z[0] < widths[0] / 2 + FT)
     {
-        throw regenError("Pulley 1 center offset 太小（不小于带宽一半 + 挡边厚度，即 "
-                ~ toString(widths[0] / 2 + ft) ~ "），否则左侧挡边会伸进管子。", ["offset1"]);
+        throw regenError("Pulley 1 center offset 太小（不小于带宽一半 + 法兰厚度，即 "
+                ~ toString(widths[0] / 2 + FT) ~ "），否则左侧法兰会伸进管子。", ["offset1"]);
     }
     for (var i = 1; i < n; i += 1)
     {
-        if (z[i] - z[i - 1] < (widths[i] + widths[i - 1]) / 2 + 2 * ft)
+        if (z[i] - z[i - 1] < (widths[i] + widths[i - 1]) / 2 + 2 * FT)
         {
             throw regenError("带轮 " ~ toString(i) ~ " 与带轮 " ~ toString(i + 1)
-                    ~ " 中心距太小（含挡边），两者重叠。最小值约 "
-                    ~ toString((widths[i] + widths[i - 1]) / 2 + 2 * ft) ~ "。", ["ctc" ~ toString(i)]);
+                    ~ " 中心距太小（含法兰），两者重叠。最小值约 "
+                    ~ toString((widths[i] + widths[i - 1]) / 2 + 2 * FT) ~ "。", ["ctc" ~ toString(i)]);
         }
     }
     for (var i = 0; i < n; i += 1)
@@ -263,8 +267,8 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         }
     }
 
-    // 主轴长度 = 最后一个带轮末端 + 右侧挡边
-    const totalLen = z[n - 1] + widths[n - 1] / 2 + ft;
+    // 主轴长度 = 最后一个带轮末端 + 右侧 COTS 法兰
+    const totalLen = z[n - 1] + widths[n - 1] / 2 + FT;
 
     var newBodies = [];
 
@@ -320,28 +324,30 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         newBodies = append(newBodies, qCreatedBy(id + ("pulleyExtrude" ~ toString(i)), EntityType.BODY));
     }
 
-    // 4. 锥形挡边：每个带轮两侧各一圈：贴带轮端面处与齿顶平齐（tipR），
-    //    以约 45 度锥面升起超过齿顶（tipR + overhang）并保持到挡边外端 ——
-    //    立在齿顶上方的锥形墙，挡住带防止滑落（同 rollerstub 的法兰）
+    // 4. COTS 标准锥形法兰：每个带轮两侧各一圈，尺寸按齿形标准固定
+    //    （FT 轴向厚度 / FH 高出齿顶的高度）：贴带轮端面处与齿顶平齐，
+    //    锥形升起超过齿顶（tipR + FH）并保持到法兰外端 —— 立在齿顶上方的
+    //    锥形墙，挡住带防止滑落（同 rollerstub / COTS 法兰带轮）
     for (var i = 0; i < n; i += 1)
     {
         const tipR = pulleyTipRadius(teeth[i], profile, pds[i]);
-        const flangeR = tipR + flangeOverhang; // 挡边墙半径（超过齿顶）
+        const flangeR = tipR + FH; // 法兰墙半径（超过齿顶）
         const flangeIdL = id + ("flangeL" ~ toString(i));
         const flangeIdR = id + ("flangeR" ~ toString(i));
 
-        // 左侧挡边：从带轮左端面（z[i] - widths[i]/2）沿 -axis 方向伸出 ft 厚
-        makeFlange(context, flangeIdL, center, axis, z[i] - widths[i] / 2, -axis, ft, tipR, flangeR);
+        // 左侧法兰：从带轮左端面（z[i] - widths[i]/2）沿 -axis 方向伸出 FT 厚
+        makeFlange(context, flangeIdL, center, axis, z[i] - widths[i] / 2, -axis, FT, tipR, flangeR);
         newBodies = append(newBodies, qCreatedBy(flangeIdL + "revolve", EntityType.BODY));
 
-        // 右侧挡边：从带轮右端面（z[i] + widths[i]/2）沿 axis 方向伸出 ft 厚
-        makeFlange(context, flangeIdR, center, axis, z[i] + widths[i] / 2, axis, ft, tipR, flangeR);
+        // 右侧法兰：从带轮右端面（z[i] + widths[i]/2）沿 axis 方向伸出 FT 厚
+        makeFlange(context, flangeIdR, center, axis, z[i] + widths[i] / 2, axis, FT, tipR, flangeR);
         newBodies = append(newBodies, qCreatedBy(flangeIdR + "revolve", EntityType.BODY));
     }
 
-    // 5. 底领：贴所选端面处最粗（盖住圆环面外环边），向外锥形收拢到主轴半径，
+    // 5. 底领：贴所选端面处最粗（半径 = max(外环半径, 主轴半径) + collarOverhang，
+    //    盖住圆环面外环边；overhang = 0 时平齐），向外锥形收拢到主轴半径，
     //    主轴保持 shaftR 直到第一个带轮
-    const collarFace = max(outerR, shaftR) + flangeOverhang; // 贴端面处最粗半径
+    const collarFace = max(outerR, shaftR) + collarOverhang; // 贴端面处最粗半径
     const collarId = id + "collar";
     makeFlange(context, collarId, center, axis, 0 * millimeter, axis, ft, collarFace, shaftR);
     newBodies = append(newBodies, qCreatedBy(collarId + "revolve", EntityType.BODY));
@@ -655,6 +661,8 @@ export enum ToothProfile
     GT2_2M
 }
 
+// FT = 带轮法兰厚度（轴向），FH = 法兰墙高出齿顶的高度 —— 与 COTS 标准
+// 法兰 GT2 带轮一致（如 SDP / Gates 法兰带轮：法兰锥形升起超过齿顶并保持）
 const ToothProfileDefinitions = {
         (ToothProfile.GT2_2M) : {
             "P" : 2 * millimeter,
@@ -665,7 +673,9 @@ const ToothProfileDefinitions = {
             "H" : 1.38 * millimeter,
             "h" : 0.75 * millimeter,
             "i" : 0.63 * millimeter,
-            "PLD" : 0.254 * millimeter
+            "PLD" : 0.254 * millimeter,
+            "FT" : 1 * millimeter,
+            "FH" : 0.8 * millimeter
         },
         (ToothProfile.GT2_3M) : {
             "P" : 3 * millimeter,
@@ -676,6 +686,8 @@ const ToothProfileDefinitions = {
             "H" : 2.4 * millimeter,
             "h" : 1.14 * millimeter,
             "i" : 1.26 * millimeter,
-            "PLD" : 0.381 * millimeter
+            "PLD" : 0.381 * millimeter,
+            "FT" : 1.5 * millimeter,
+            "FH" : 1.2 * millimeter
         },
     };
