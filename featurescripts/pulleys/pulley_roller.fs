@@ -290,7 +290,7 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         // 真正交叠：最小 CTC = 半宽之和 + 2 倍较大法兰厚度（此时两法兰外
         // 端面共面，中间无间隙、无需填充圆柱）
         const ftIface = max(fts[i - 1], fts[i]);
-        if (z[i] - z[i - 1] < (widths[i] + widths[i - 1]) / 2 + 2 * ftIface - TOLERANCE.zeroLength)
+        if (z[i] - z[i - 1] < (widths[i] + widths[i - 1]) / 2 + 2 * ftIface - 1e-6 * meter)
         {
             throw regenError("带轮 " ~ toString(i) ~ " 与带轮 " ~ toString(i + 1)
                     ~ " 中心距太小，法兰交叠。最小值（两法兰外端面恰好重合）为 "
