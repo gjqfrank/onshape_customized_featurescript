@@ -7,17 +7,20 @@ import(path : "onshape/std/common.fs", version : "3044.0");
  * 在一根空心管滚轮的端部圆环面上生成复合带轮零件（一个 part）：
  *   1. 按输入长度填充管子内孔（从所选端面向管内）
  *   2. 从端面沿轴向延伸主轴，默认直径与管子外径相同（与圆环面外环平齐）
- *   3. 沿轴排布多个 GT2 同步带轮，每个带轮可独立设置齿数 / 节圆直径 / 宽度，
- *      相邻带轮中心距可精确控制；每个带轮两侧有锥形挡边（法兰）防止带滑落，
- *      尺寸与 COTS 标准法兰带轮一致（按齿形标准固定，见 ToothProfileDefinitions
- *      的 FT/FH）：从齿顶锥形升起超过齿顶并保持，立在齿顶上方的锥形墙
+ *   3. 沿轴排布多个同步带轮，每个带轮可独立设置齿形标准（GT2 2M/3M/5M/8M、
+ *      HTD 3M/5M 共六种）/ 齿数 / 节圆直径 / 宽度，相邻带轮中心距可精确控制；
+ *      每个带轮两侧有锥形挡边（法兰）防止带滑落，尺寸与 COTS 标准法兰带轮
+ *      一致（按齿形标准固定，见 ToothProfileDefinitions 的 FT/FH）：从齿顶
+ *      锥形升起超过齿顶并保持，立在齿顶上方的锥形墙。相邻两带轮之间：若
+ *      一侧法兰更大，另一侧法兰也采用该更大尺寸，两法兰之间用同直径圆柱填充
  *   4. 端面底领：贴端面先是固定 1mm 厚的圆柱（盖住圆环面外环边），再以
  *      最厚 2mm 的锥体收拢到带轮 1 法兰直径；之后以该直径的圆柱引导段一直
  *      延伸到带轮 1 的法兰（平齐衔接）。底领 + 引导段 + 管内填充与其余
  *      新几何全部合并为一个 part
  *   5. 全部新几何合并为单一零件（独立 part，不与原管子合并）
  *
- * 齿形解析公式来自 trilobio 的 "Timing Belt Pulley"（GT2-2M / GT2-3M）。
+ * 齿形解析公式来自 trilobio 的 "Timing Belt Pulley"（GT2 2M/3M）；
+ * GT2 5M/8M 与 HTD 3M/5M 采用各标准公布的名义齿形参数（近似）。
  */
 annotation { "Feature Type Name" : "Pulley Roller" }
 export const pulleyRoller = defineFeature(function(context is Context, id is Id, definition is map)
@@ -40,8 +43,9 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         annotation { "Name" : "Number of pulleys" }
         isInteger(definition.pulleyCount, PULLEY_COUNT_BOUNDS);
 
-        annotation { "Name" : "Tooth profile" }
-        definition.toothProfile is ToothProfile;
+        annotation { "Name" : "Pulley 1 tooth profile",
+                     "Description" : "Belt tooth standard for pulley 1 (GT2 2M/3M/5M/8M, HTD 3M/5M)" }
+        definition.profile1 is ToothProfile;
 
         annotation { "Name" : "End collar overhang",
                      "Description" : "How far the collar extends beyond the tube OD / pulley-1 flange diameter at the end face (0 = flush). Collar: fixed 1mm cylinder + max-2mm taper; pulley flanges use COTS standard sizes" }
@@ -73,6 +77,10 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         annotation { "Name" : "Pulley 1-2 center distance",
                      "Description" : "Axial distance between pulley 1 and pulley 2 centers (used when Number of pulleys is 2 or more)" }
         isLength(definition.ctc1, CTC_BOUNDS);
+        annotation { "Name" : "Pulley 2 tooth profile",
+                     "Description" : "Used when Number of pulleys is 2 or more" }
+        definition.profile2 is ToothProfile;
+
         annotation { "Name" : "Pulley 2 teeth",
                      "Description" : "Used when Number of pulleys is 2 or more" }
         isInteger(definition.teeth2, TEETH_BOUNDS);
@@ -86,6 +94,10 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         annotation { "Name" : "Pulley 2-3 center distance",
                      "Description" : "Axial distance between pulley 2 and pulley 3 centers (used when Number of pulleys is 3 or more)" }
         isLength(definition.ctc2, CTC_BOUNDS);
+        annotation { "Name" : "Pulley 3 tooth profile",
+                     "Description" : "Used when Number of pulleys is 3 or more" }
+        definition.profile3 is ToothProfile;
+
         annotation { "Name" : "Pulley 3 teeth",
                      "Description" : "Used when Number of pulleys is 3 or more" }
         isInteger(definition.teeth3, TEETH_BOUNDS);
@@ -99,6 +111,10 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         annotation { "Name" : "Pulley 3-4 center distance",
                      "Description" : "Axial distance between pulley 3 and pulley 4 centers (used when Number of pulleys is 4)" }
         isLength(definition.ctc3, CTC_BOUNDS);
+        annotation { "Name" : "Pulley 4 tooth profile",
+                     "Description" : "Used when Number of pulleys is 4" }
+        definition.profile4 is ToothProfile;
+
         annotation { "Name" : "Pulley 4 teeth",
                      "Description" : "Used when Number of pulleys is 4" }
         isInteger(definition.teeth4, TEETH_BOUNDS);
@@ -117,7 +133,10 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         "flip" : false,
         "fillLength" : 20 * millimeter,
         "pulleyCount" : 2,
-        "toothProfile" : ToothProfile.GT2_3M,
+        "profile1" : ToothProfile.GT2_3M,
+        "profile2" : ToothProfile.GT2_3M,
+        "profile3" : ToothProfile.GT2_3M,
+        "profile4" : ToothProfile.GT2_3M,
         "flangeOverhang" : 1 * millimeter,
         "customShaftDia" : false,
         "shaftDiameter" : 10 * millimeter,
@@ -195,14 +214,15 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         shaftR = definition.shaftDiameter / 2;
     }
 
-    // 收集各带轮参数
-    const profile = ToothProfileDefinitions[definition.toothProfile];
+    // 收集各带轮参数（每个带轮可独立选择齿形标准）
+    var profiles = [definition.profile1];
     var teeth = [definition.teeth1];
     var pds = [definition.pd1];
     var widths = [definition.width1];
     var centers = [definition.offset1];
     if (definition.pulleyCount >= 2)
     {
+        profiles = append(profiles, definition.profile2);
         teeth = append(teeth, definition.teeth2);
         pds = append(pds, definition.pd2);
         widths = append(widths, definition.width2);
@@ -210,6 +230,7 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     }
     if (definition.pulleyCount >= 3)
     {
+        profiles = append(profiles, definition.profile3);
         teeth = append(teeth, definition.teeth3);
         pds = append(pds, definition.pd3);
         widths = append(widths, definition.width3);
@@ -217,6 +238,7 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     }
     if (definition.pulleyCount >= 4)
     {
+        profiles = append(profiles, definition.profile4);
         teeth = append(teeth, definition.teeth4);
         pds = append(pds, definition.pd4);
         widths = append(widths, definition.width4);
@@ -225,10 +247,23 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
 
     const n = size(teeth);
 
-    // 底领参数（仅作用于端面底领，径向超出量）；带轮法兰用 COTS 标准值（profile 的 FT/FH）
+    // 底领参数（仅作用于端面底领，径向超出量）
     const collarOverhang = definition.flangeOverhang;
-    const FT = profile["FT"];
-    const FH = profile["FH"];
+
+    // 各带轮的齿形参数与 COTS 法兰参数（FT 轴向厚度 / FH 高出齿顶高度）、
+    // 齿顶半径与自身法兰半径
+    var profs = [];
+    var fts = [];
+    var tipRs = [];
+    var flangeRs = [];
+    for (var i = 0; i < n; i += 1)
+    {
+        const p = ToothProfileDefinitions[profiles[i]];
+        profs = append(profs, p);
+        fts = append(fts, p["FT"]);
+        tipRs = append(tipRs, pulleyTipRadius(teeth[i], p, pds[i]));
+        flangeRs = append(flangeRs, tipRs[i] + p["FH"]);
+    }
 
     // 计算各带轮中心 z 位置（centers[0] 为面到带轮 1 中心，其后为相邻中心距增量）
     var z = [centers[0]];
@@ -238,10 +273,10 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     }
 
     // 校验：带轮（含 COTS 法兰）不得伸进管子、不得相互重叠、齿根必须粗于主轴
-    if (z[0] < widths[0] / 2 + FT)
+    if (z[0] < widths[0] / 2 + fts[0])
     {
         throw regenError("Pulley 1 center offset 太小（不小于带宽一半 + 法兰厚度，即 "
-                ~ toString(widths[0] / 2 + FT) ~ "），否则左侧法兰会伸进管子。", ["offset1"]);
+                ~ toString(widths[0] / 2 + fts[0]) ~ "），否则左侧法兰会伸进管子。", ["offset1"]);
     }
     // 底领（圆柱 + 锥体收拢段）必须在带轮 1 端面之前完成，避免盖住齿形
     if (z[0] - widths[0] / 2 < COLLAR_CYL_LEN + COLLAR_CONE_LEN)
@@ -251,16 +286,17 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     }
     for (var i = 1; i < n; i += 1)
     {
-        if (z[i] - z[i - 1] < (widths[i] + widths[i - 1]) / 2 + 2 * FT)
+        const ftIface = max(fts[i - 1], fts[i]); // 接口法兰取两带轮中较大者
+        if (z[i] - z[i - 1] < (widths[i] + widths[i - 1]) / 2 + 2 * ftIface)
         {
             throw regenError("带轮 " ~ toString(i) ~ " 与带轮 " ~ toString(i + 1)
                     ~ " 中心距太小（含法兰），两者重叠。最小值约 "
-                    ~ toString((widths[i] + widths[i - 1]) / 2 + 2 * FT) ~ "。", ["ctc" ~ toString(i)]);
+                    ~ toString((widths[i] + widths[i - 1]) / 2 + 2 * ftIface) ~ "。", ["ctc" ~ toString(i)]);
         }
     }
     for (var i = 0; i < n; i += 1)
     {
-        const rootR = pulleyRootRadius(teeth[i], profile, pds[i]);
+        const rootR = pulleyRootRadius(teeth[i], profs[i], pds[i]);
         if (shaftR >= rootR)
         {
             throw regenError("主轴直径对于带轮 " ~ toString(i + 1) ~ " 太大（齿根半径约 "
@@ -269,7 +305,7 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     }
 
     // 主轴长度 = 最后一个带轮末端 + 右侧 COTS 法兰
-    const totalLen = z[n - 1] + widths[n - 1] / 2 + FT;
+    const totalLen = z[n - 1] + widths[n - 1] / 2 + fts[n - 1];
 
     var newBodies = [];
 
@@ -312,8 +348,7 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
 
     // 2b. 引导段：与带轮 1 法兰同直径（tipR + FH）的圆柱，从端面一直延伸到
     //     带轮 1 左法兰，与法兰平齐衔接
-    const tipR0 = pulleyTipRadius(teeth[0], profile, pds[0]);
-    const leadR = tipR0 + FH; // 引导段半径 = 带轮 1 法兰半径
+    const leadR = flangeRs[0]; // 引导段半径 = 带轮 1 左法兰半径
     const leadLen = z[0] - widths[0] / 2; // 引导段长度：端面 -> 带轮 1 左端面
     const leadSketch = newSketchOnPlane(context, id + "leadSketch", {
                 "sketchPlane" : plane(center, axis)
@@ -335,7 +370,7 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     for (var i = 0; i < n; i += 1)
     {
         const pulleyPlane = plane(center + axis * (z[i] - widths[i] / 2), axis);
-        drawPulleyTeeth(context, id + ("pulley" ~ toString(i)), pulleyPlane, teeth[i], profile, pds[i]);
+        drawPulleyTeeth(context, id + ("pulley" ~ toString(i)), pulleyPlane, teeth[i], profs[i], pds[i]);
 
         opExtrude(context, id + ("pulleyExtrude" ~ toString(i)), {
                     "entities" : qSketchRegion(id + ("pulley" ~ toString(i))),
@@ -346,24 +381,67 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         newBodies = append(newBodies, qCreatedBy(id + ("pulleyExtrude" ~ toString(i)), EntityType.BODY));
     }
 
-    // 4. COTS 标准锥形法兰：每个带轮两侧各一圈，尺寸按齿形标准固定
-    //    （FT 轴向厚度 / FH 高出齿顶的高度）：贴带轮端面处与齿顶平齐，
-    //    锥形升起超过齿顶（tipR + FH）并保持到法兰外端 —— 立在齿顶上方的
-    //    锥形墙，挡住带防止滑落（同 rollerstub / COTS 法兰带轮）
+    // 4. 锥形法兰（旋转成型）：
+    //    - pulley 1 左侧 / 最后一个 pulley 右侧：各自 COTS 标准尺寸
+    //      （贴带轮端面处与齿顶平齐，锥形升起超过齿顶并保持）
+    //    - 相邻两个 pulley 之间的接口：若一侧法兰更大，另一侧法兰也采用
+    //      该更大尺寸（半径与厚度均取两者较大值），两个法兰之间用与法兰
+    //      同直径的圆柱填充，形成连续过渡
     for (var i = 0; i < n; i += 1)
     {
-        const tipR = pulleyTipRadius(teeth[i], profile, pds[i]);
-        const flangeR = tipR + FH; // 法兰墙半径（超过齿顶）
-        const flangeIdL = id + ("flangeL" ~ toString(i));
-        const flangeIdR = id + ("flangeR" ~ toString(i));
+        if (i == 0)
+        {
+            // pulley 1 左侧法兰（自身 COTS 尺寸）
+            const flangeIdL = id + "flangeL0";
+            makeFlange(context, flangeIdL, center, axis, z[0] - widths[0] / 2, -axis, fts[0], tipRs[0], flangeRs[0]);
+            newBodies = append(newBodies, qCreatedBy(flangeIdL + "revolve", EntityType.BODY));
+        }
 
-        // 左侧法兰：从带轮左端面（z[i] - widths[i]/2）沿 -axis 方向伸出 FT 厚
-        makeFlange(context, flangeIdL, center, axis, z[i] - widths[i] / 2, -axis, FT, tipR, flangeR);
-        newBodies = append(newBodies, qCreatedBy(flangeIdL + "revolve", EntityType.BODY));
+        if (i < n - 1)
+        {
+            // 接口 i-(i+1)：两侧法兰均取较大尺寸
+            const frIface = max(flangeRs[i], flangeRs[i + 1]);
+            const ftIface = max(fts[i], fts[i + 1]);
 
-        // 右侧法兰：从带轮右端面（z[i] + widths[i]/2）沿 axis 方向伸出 FT 厚
-        makeFlange(context, flangeIdR, center, axis, z[i] + widths[i] / 2, axis, FT, tipR, flangeR);
-        newBodies = append(newBodies, qCreatedBy(flangeIdR + "revolve", EntityType.BODY));
+            // 带轮 i 右侧法兰：从右端面沿 +axis 伸出 ftIface 厚
+            const flangeIdR = id + ("flangeR" ~ toString(i));
+            makeFlange(context, flangeIdR, center, axis, z[i] + widths[i] / 2, axis, ftIface, tipRs[i], frIface);
+            newBodies = append(newBodies, qCreatedBy(flangeIdR + "revolve", EntityType.BODY));
+
+            // 带轮 i+1 左侧法兰：从左端面沿 -axis 伸出 ftIface 厚
+            const flangeIdL = id + ("flangeL" ~ toString(i + 1));
+            makeFlange(context, flangeIdL, center, axis, z[i + 1] - widths[i + 1] / 2, -axis, ftIface, tipRs[i + 1], frIface);
+            newBodies = append(newBodies, qCreatedBy(flangeIdL + "revolve", EntityType.BODY));
+
+            // 填充圆柱：与接口法兰同直径，位于两个法兰之间
+            const cylStart = z[i] + widths[i] / 2 + ftIface;
+            const cylLen = z[i + 1] - widths[i + 1] / 2 - ftIface - cylStart;
+            if (cylLen > 0 * millimeter)
+            {
+                const gapSketch = newSketchOnPlane(context, id + ("gapSketch" ~ toString(i)), {
+                            "sketchPlane" : plane(center + axis * cylStart, axis)
+                        });
+                skCircle(gapSketch, "gap", {
+                            "center" : vector(0, 0) * millimeter,
+                            "radius" : frIface
+                        });
+                skSolve(gapSketch);
+                opExtrude(context, id + ("gapExtrude" ~ toString(i)), {
+                            "entities" : qSketchRegion(id + ("gapSketch" ~ toString(i))),
+                            "direction" : axis,
+                            "endBound" : BoundingType.BLIND,
+                            "endDepth" : cylLen
+                        });
+                newBodies = append(newBodies, qCreatedBy(id + ("gapExtrude" ~ toString(i)), EntityType.BODY));
+            }
+        }
+        else
+        {
+            // 最后一个 pulley 右侧法兰（自身 COTS 尺寸）
+            const flangeIdR = id + ("flangeR" ~ toString(i));
+            makeFlange(context, flangeIdR, center, axis, z[i] + widths[i] / 2, axis, fts[i], tipRs[i], flangeRs[i]);
+            newBodies = append(newBodies, qCreatedBy(flangeIdR + "revolve", EntityType.BODY));
+        }
     }
 
     // 5. 底领：贴端面先是轴向厚度 1mm（COLLAR_CYL_LEN，固定）的圆柱（半径
@@ -711,10 +789,18 @@ const FLANGE_O_BOUNDS =
 
 export enum ToothProfile
 {
-    annotation { "Name" : "GT2-3M (3mm pitch)" }
+    annotation { "Name" : "GT2 2M (2mm pitch)" }
+    GT2_2M,
+    annotation { "Name" : "GT2 3M (3mm pitch)" }
     GT2_3M,
-    annotation { "Name" : "GT2-2M (2mm pitch)" }
-    GT2_2M
+    annotation { "Name" : "GT2 5M (5mm pitch)" }
+    GT2_5M,
+    annotation { "Name" : "GT2 8M (8mm pitch)" }
+    GT2_8M,
+    annotation { "Name" : "HTD 3M (3mm pitch)" }
+    HTD_3M,
+    annotation { "Name" : "HTD 5M (5mm pitch)" }
+    HTD_5M
 }
 
 // FT = 带轮法兰厚度（轴向），FH = 法兰墙高出齿顶的高度 —— 与 COTS 标准
@@ -744,6 +830,58 @@ const ToothProfileDefinitions = {
             "i" : 1.26 * millimeter,
             "PLD" : 0.381 * millimeter,
             "FT" : 1.5 * millimeter,
+            "FH" : 1.2 * millimeter
+        },
+        (ToothProfile.GT2_5M) : {
+            "P" : 5 * millimeter,
+            "R1" : 0.42 * millimeter,
+            "R2" : 2.54 * millimeter,
+            "R3" : 1.42 * millimeter,
+            "b" : 1.02 * millimeter,
+            "H" : 4 * millimeter,
+            "h" : 1.9 * millimeter,
+            "i" : 2.1 * millimeter,
+            "PLD" : 0.635 * millimeter,
+            "FT" : 2 * millimeter,
+            "FH" : 1.5 * millimeter
+        },
+        (ToothProfile.GT2_8M) : {
+            "P" : 8 * millimeter,
+            "R1" : 0.67 * millimeter,
+            "R2" : 4.05 * millimeter,
+            "R3" : 2.27 * millimeter,
+            "b" : 1.63 * millimeter,
+            "H" : 6.4 * millimeter,
+            "h" : 3.04 * millimeter,
+            "i" : 3.36 * millimeter,
+            "PLD" : 1.02 * millimeter,
+            "FT" : 3 * millimeter,
+            "FH" : 2 * millimeter
+        },
+        (ToothProfile.HTD_3M) : {
+            "P" : 3 * millimeter,
+            "R1" : 0.3 * millimeter,
+            "R2" : 1.3 * millimeter,
+            "R3" : 0.9 * millimeter,
+            "b" : 0.76 * millimeter,
+            "H" : 2.4 * millimeter,
+            "h" : 1.28 * millimeter,
+            "i" : 1.4 * millimeter,
+            "PLD" : 0.381 * millimeter,
+            "FT" : 1.5 * millimeter,
+            "FH" : 1 * millimeter
+        },
+        (ToothProfile.HTD_5M) : {
+            "P" : 5 * millimeter,
+            "R1" : 0.5 * millimeter,
+            "R2" : 2.16 * millimeter,
+            "R3" : 1.5 * millimeter,
+            "b" : 1.27 * millimeter,
+            "H" : 4 * millimeter,
+            "h" : 2.06 * millimeter,
+            "i" : 2.3 * millimeter,
+            "PLD" : 0.572 * millimeter,
+            "FT" : 2 * millimeter,
             "FH" : 1.2 * millimeter
         },
     };
