@@ -11,9 +11,9 @@ import(path : "onshape/std/common.fs", version : "3044.0");
  *      相邻带轮中心距可精确控制；每个带轮两侧有锥形挡边（法兰）防止带滑落，
  *      尺寸与 COTS 标准法兰带轮一致（按齿形标准固定，见 ToothProfileDefinitions
  *      的 FT/FH）：从齿顶锥形升起超过齿顶并保持，立在齿顶上方的锥形墙
- *   4. 端面处一圈薄锥形底领：贴所选端面处最粗（盖住圆环面外环边，超出量 =
- *      End collar overhang，可为 0 表示平齐），向外收拢到主轴直径；
- *      主轴保持该直径一直延伸到第一个带轮
+ *   4. 端面处一圈薄锥形底领：贴所选端面处最粗（超出量 = End collar overhang，
+ *      可为 0），向外收拢到带轮 1 法兰直径；之后以该直径的圆柱引导段一直
+ *      延伸到带轮 1 的法兰（与法兰平齐衔接）
  *   5. 全部新几何合并为单一零件（独立 part，不与原管子合并）
  *
  * 齿形解析公式来自 trilobio 的 "Timing Belt Pulley"（GT2-2M / GT2-3M）。
@@ -47,7 +47,7 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         isLength(definition.flangeThickness, FLANGE_T_BOUNDS);
 
         annotation { "Name" : "End collar overhang",
-                     "Description" : "How far the collar extends beyond the tube outer radius at the end face (0 = flush). Pulley flanges use COTS standard sizes" }
+                     "Description" : "How far the collar extends beyond the tube OD / pulley-1 flange diameter at the end face (0 = flush). Pulley flanges use COTS standard sizes" }
         isLength(definition.flangeOverhang, FLANGE_O_BOUNDS);
 
         annotation { "Name" : "Custom shaft diameter",
@@ -309,6 +309,27 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
             });
     newBodies = append(newBodies, qCreatedBy(id + "shaftExtrude", EntityType.BODY));
 
+    // 2b. 引导段：与带轮 1 法兰同直径（tipR + FH）的圆柱，从端面一直延伸到
+    //     带轮 1 左法兰，与法兰平齐衔接
+    const tipR0 = pulleyTipRadius(teeth[0], profile, pds[0]);
+    const leadR = tipR0 + FH; // 引导段半径 = 带轮 1 法兰半径
+    const leadLen = z[0] - widths[0] / 2; // 引导段长度：端面 -> 带轮 1 左端面
+    const leadSketch = newSketchOnPlane(context, id + "leadSketch", {
+                "sketchPlane" : plane(center, axis)
+            });
+    skCircle(leadSketch, "lead", {
+                "center" : vector(0, 0) * millimeter,
+                "radius" : leadR
+            });
+    skSolve(leadSketch);
+    opExtrude(context, id + "leadExtrude", {
+                "entities" : qSketchRegion(id + "leadSketch"),
+                "direction" : axis,
+                "endBound" : BoundingType.BLIND,
+                "endDepth" : leadLen
+            });
+    newBodies = append(newBodies, qCreatedBy(id + "leadExtrude", EntityType.BODY));
+
     // 3. 各带轮：齿形草图（放在带轮起始端面）+ 单向拉伸一个宽度
     for (var i = 0; i < n; i += 1)
     {
@@ -344,12 +365,12 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         newBodies = append(newBodies, qCreatedBy(flangeIdR + "revolve", EntityType.BODY));
     }
 
-    // 5. 底领：贴所选端面处最粗（半径 = max(外环半径, 主轴半径) + collarOverhang，
-    //    盖住圆环面外环边；overhang = 0 时平齐），向外锥形收拢到主轴半径，
-    //    主轴保持 shaftR 直到第一个带轮
-    const collarFace = max(outerR, shaftR) + collarOverhang; // 贴端面处最粗半径
+    // 5. 底领：贴所选端面处最粗（半径 = max(外环半径, 带轮1法兰半径) + collarOverhang，
+    //    盖住圆环面外环边；overhang = 0 时与带轮1法兰平齐），向外锥形收拢到
+    //    带轮 1 法兰半径，之后引导段保持该直径直到带轮 1 法兰
+    const collarFace = max(outerR, leadR) + collarOverhang; // 贴端面处最粗半径
     const collarId = id + "collar";
-    makeFlange(context, collarId, center, axis, 0 * millimeter, axis, ft, collarFace, shaftR);
+    makeFlange(context, collarId, center, axis, 0 * millimeter, axis, ft, collarFace, leadR);
     newBodies = append(newBodies, qCreatedBy(collarId + "revolve", EntityType.BODY));
 
     // 6. 合并：新几何（填充 + 主轴 + 各带轮 + 挡边 + 底领）合并为单一零件，不与原管子合并
