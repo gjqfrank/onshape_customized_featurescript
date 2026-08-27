@@ -532,12 +532,13 @@ function makeFlange(context is Context, id is Id, center is Vector, axis is Vect
  * 端面底领（旋转成型）：贴所选端面先是轴向厚度 cylLen 的圆柱（半径 rFace，
  * 盖住圆环面外环边），随后锥体在轴向 coneLen（最厚 2mm）内收拢到 rOuter
  * （带轮 1 法兰半径），与引导段圆柱平齐衔接；之后引导段保持 rOuter 直到
- * 带轮 1 法兰。截面草图放在过 center、法向为 axis 的平面上，绕轴线整周旋转。
+ * 带轮 1 法兰。截面草图平面过 center 且包含轴线（x 轴沿 axis 方向），
+ * 绕轴线整周旋转。
  */
 function makeCollar(context is Context, id is Id, center is Vector, axis is Vector, cylLen is ValueWithUnits, coneLen is ValueWithUnits, rFace is ValueWithUnits, rOuter is ValueWithUnits)
 {
     const sk = newSketchOnPlane(context, id + "sketch", {
-                "sketchPlane" : plane(center, axis)
+                "sketchPlane" : plane(center, axis, perpendicularVector(axis))
             });
 
     // 截面轮廓（x = 沿 axis 的轴向距离，y = 半径），y=0 边位于旋转轴上
