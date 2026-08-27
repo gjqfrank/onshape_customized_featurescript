@@ -11,10 +11,10 @@ import(path : "onshape/std/common.fs", version : "3044.0");
  *      相邻带轮中心距可精确控制；每个带轮两侧有锥形挡边（法兰）防止带滑落，
  *      尺寸与 COTS 标准法兰带轮一致（按齿形标准固定，见 ToothProfileDefinitions
  *      的 FT/FH）：从齿顶锥形升起超过齿顶并保持，立在齿顶上方的锥形墙
- *   4. 端面底领：贴端面先是厚度 End collar thickness（默认 1mm）的圆柱
- *      （盖住圆环面外环边），再以最厚 2mm 的锥体收拢到带轮 1 法兰直径；
- *      之后以该直径的圆柱引导段一直延伸到带轮 1 的法兰（平齐衔接）。
- *      底领 + 引导段 + 管内填充与其余新几何全部合并为一个 part
+ *   4. 端面底领：贴端面先是固定 1mm 厚的圆柱（盖住圆环面外环边），再以
+ *      最厚 2mm 的锥体收拢到带轮 1 法兰直径；之后以该直径的圆柱引导段一直
+ *      延伸到带轮 1 的法兰（平齐衔接）。底领 + 引导段 + 管内填充与其余
+ *      新几何全部合并为一个 part
  *   5. 全部新几何合并为单一零件（独立 part，不与原管子合并）
  *
  * 齿形解析公式来自 trilobio 的 "Timing Belt Pulley"（GT2-2M / GT2-3M）。
@@ -43,12 +43,8 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         annotation { "Name" : "Tooth profile" }
         definition.toothProfile is ToothProfile;
 
-        annotation { "Name" : "End collar thickness",
-                     "Description" : "Axial length of the straight cylinder at the selected end face, before the max-2mm taper down to the pulley-1 flange diameter" }
-        isLength(definition.flangeThickness, FLANGE_T_BOUNDS);
-
         annotation { "Name" : "End collar overhang",
-                     "Description" : "How far the collar extends beyond the tube OD / pulley-1 flange diameter at the end face (0 = flush). Pulley flanges use COTS standard sizes" }
+                     "Description" : "How far the collar extends beyond the tube OD / pulley-1 flange diameter at the end face (0 = flush). Collar: fixed 1mm cylinder + max-2mm taper; pulley flanges use COTS standard sizes" }
         isLength(definition.flangeOverhang, FLANGE_O_BOUNDS);
 
         annotation { "Name" : "Custom shaft diameter",
@@ -122,7 +118,6 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         "fillLength" : 20 * millimeter,
         "pulleyCount" : 2,
         "toothProfile" : ToothProfile.GT2_3M,
-        "flangeThickness" : 1 * millimeter,
         "flangeOverhang" : 1 * millimeter,
         "customShaftDia" : false,
         "shaftDiameter" : 10 * millimeter,
@@ -230,8 +225,7 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
 
     const n = size(teeth);
 
-    // 底领参数（仅作用于端面底领）；带轮法兰用 COTS 标准值（profile 的 FT/FH）
-    const ft = definition.flangeThickness;
+    // 底领参数（仅作用于端面底领，径向超出量）；带轮法兰用 COTS 标准值（profile 的 FT/FH）
     const collarOverhang = definition.flangeOverhang;
     const FT = profile["FT"];
     const FH = profile["FH"];
@@ -250,10 +244,10 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
                 ~ toString(widths[0] / 2 + FT) ~ "），否则左侧法兰会伸进管子。", ["offset1"]);
     }
     // 底领（圆柱 + 锥体收拢段）必须在带轮 1 端面之前完成，避免盖住齿形
-    if (z[0] - widths[0] / 2 < ft + COLLAR_CONE_LEN)
+    if (z[0] - widths[0] / 2 < COLLAR_CYL_LEN + COLLAR_CONE_LEN)
     {
         throw regenError("Pulley 1 center offset 太小：端面底领（圆柱 + 锥体）需在带轮 1 之前完成收拢，最小 offset ≈ "
-                ~ toString(widths[0] / 2 + ft + COLLAR_CONE_LEN) ~ "。", ["offset1"]);
+                ~ toString(widths[0] / 2 + COLLAR_CYL_LEN + COLLAR_CONE_LEN) ~ "。", ["offset1"]);
     }
     for (var i = 1; i < n; i += 1)
     {
@@ -372,12 +366,12 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         newBodies = append(newBodies, qCreatedBy(flangeIdR + "revolve", EntityType.BODY));
     }
 
-    // 5. 底领：贴端面先是轴向厚度 ft 的圆柱（半径 collarFace，盖住圆环面外环边），
-    //    再以最厚 COLLAR_CONE_LEN（2mm）的锥体收拢到带轮 1 法兰半径 leadR；
-    //    之后引导段保持 leadR 直到带轮 1 法兰
+    // 5. 底领：贴端面先是轴向厚度 1mm（COLLAR_CYL_LEN，固定）的圆柱（半径
+    //    collarFace，盖住圆环面外环边），再以最厚 2mm（COLLAR_CONE_LEN，固定）
+    //    的锥体收拢到带轮 1 法兰半径 leadR；之后引导段保持 leadR 直到带轮 1 法兰
     const collarFace = max(outerR, leadR) + collarOverhang; // 圆柱段半径
     const collarId = id + "collar";
-    makeCollar(context, collarId, center, axis, ft, COLLAR_CONE_LEN, collarFace, leadR);
+    makeCollar(context, collarId, center, axis, COLLAR_CYL_LEN, COLLAR_CONE_LEN, collarFace, leadR);
     newBodies = append(newBodies, qCreatedBy(collarId + "revolve", EntityType.BODY));
 
     // 6. 合并：新几何（填充 + 主轴 + 各带轮 + 挡边 + 底领）合并为单一零件，不与原管子合并
@@ -705,13 +699,8 @@ const CTC_BOUNDS =
             (inch) : 0.75
         } as LengthBoundSpec;
 
-const FLANGE_T_BOUNDS =
-{
-            (millimeter) : [0.2, 1, 20],
-            (inch) : 0.04
-        } as LengthBoundSpec;
-
-// 端面底领锥体收拢段的轴向长度上限（最厚 2mm）
+// 端面底领尺寸（固定）：圆柱段轴向厚度 1mm，锥体收拢段最厚 2mm
+const COLLAR_CYL_LEN = 1 * millimeter;
 const COLLAR_CONE_LEN = 2 * millimeter;
 
 const FLANGE_O_BOUNDS =
