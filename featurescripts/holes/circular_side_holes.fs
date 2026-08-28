@@ -273,41 +273,98 @@ function buildRingSpecs(definition is map) returns array
 // 每圈参数取值辅助（ring 从 0 计）
 function getRingDistance(definition is map, ring is number)
 {
-    return ring == 1 ? definition.ring2Distance
-         : ring == 2 ? definition.ring3Distance
-         : definition.ring4Distance;
+    if (ring == 1)
+    {
+        return definition.ring2Distance;
+    }
+    else if (ring == 2)
+    {
+        return definition.ring3Distance;
+    }
+    else
+    {
+        return definition.ring4Distance;
+    }
 }
 
 function getRingHoleCount(definition is map, ring is number)
 {
-    return ring == 0 ? definition.count1
-         : ring == 1 ? definition.count2
-         : ring == 2 ? definition.count3
-         : definition.count4;
+    if (ring == 0)
+    {
+        return definition.count1;
+    }
+    else if (ring == 1)
+    {
+        return definition.count2;
+    }
+    else if (ring == 2)
+    {
+        return definition.count3;
+    }
+    else
+    {
+        return definition.count4;
+    }
 }
 
 function getRingHoleDiameter(definition is map, ring is number)
 {
-    return ring == 0 ? definition.dia1
-         : ring == 1 ? definition.dia2
-         : ring == 2 ? definition.dia3
-         : definition.dia4;
+    if (ring == 0)
+    {
+        return definition.dia1;
+    }
+    else if (ring == 1)
+    {
+        return definition.dia2;
+    }
+    else if (ring == 2)
+    {
+        return definition.dia3;
+    }
+    else
+    {
+        return definition.dia4;
+    }
 }
 
 function getRingHoleDepth(definition is map, ring is number)
 {
-    return ring == 0 ? definition.depth1
-         : ring == 1 ? definition.depth2
-         : ring == 2 ? definition.depth3
-         : definition.depth4;
+    if (ring == 0)
+    {
+        return definition.depth1;
+    }
+    else if (ring == 1)
+    {
+        return definition.depth2;
+    }
+    else if (ring == 2)
+    {
+        return definition.depth3;
+    }
+    else
+    {
+        return definition.depth4;
+    }
 }
 
 function getRingHoleThrough(definition is map, ring is number)
 {
-    return ring == 0 ? definition.through1
-         : ring == 1 ? definition.through2
-         : ring == 2 ? definition.through3
-         : definition.through4;
+    if (ring == 0)
+    {
+        return definition.through1;
+    }
+    else if (ring == 1)
+    {
+        return definition.through2;
+    }
+    else if (ring == 2)
+    {
+        return definition.through3;
+    }
+    else
+    {
+        return definition.through4;
+    }
 }
 
 // ---------------------------------------------------------------
