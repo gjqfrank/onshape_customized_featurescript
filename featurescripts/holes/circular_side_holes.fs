@@ -163,8 +163,10 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
         cutRingHoles(context, id + ("ring" ~ toString(i)), definition, cyl, specs[i]);
     }
 
-    // 4. 清理草图（alexkempen 写法：qSketchFilter 过滤草图实体）
-    cleanup(context, id + "deleteSketches", qCreatedBy(id, EntityType.BODY)->qSketchFilter(SketchObject.YES));
+    // 4. 清理草图（opDeleteBodies + qSketchFilter，参考 neilcooke/alexkempen）
+    opDeleteBodies(context, id + "deleteSketches", {
+                "entities" : qCreatedBy(id, EntityType.BODY)->qSketchFilter(SketchObject.YES)
+            });
 });
 
 // ---------------------------------------------------------------
