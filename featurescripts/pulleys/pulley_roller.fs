@@ -405,10 +405,14 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     var newBodies = [];
 
     // 1. 填充管子内孔
+    //    填充体从端面外 FILL_OVERLAP 处沿 -axis 拉伸 fillLength + FILL_OVERLAP：
+    //    伸出端面的 0.5mm 完全位于底领实心盘（r <= collarFace）内部，外观不可见，
+    //    但使填充与底领产生真实体积重叠（而非仅 z=0 面贴面接触），
+    //    布尔 union 才能可靠地把端面内填充与端面外几何缝合成单一 part
     if (definition.fillLength > 0 * millimeter)
     {
         const fillSketch = newSketchOnPlane(context, id + "fillSketch", {
-                    "sketchPlane" : plane(center, axis)
+                    "sketchPlane" : plane(center + axis * FILL_OVERLAP, axis)
                 });
         skCircle(fillSketch, "fill", {
                     "center" : vector(0, 0) * millimeter,
@@ -419,7 +423,7 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
                     "entities" : qSketchRegion(id + "fillSketch"),
                     "direction" : -axis,
                     "endBound" : BoundingType.BLIND,
-                    "endDepth" : definition.fillLength
+                    "endDepth" : definition.fillLength + FILL_OVERLAP
                 });
         newBodies = append(newBodies, qCreatedBy(id + "fillExtrude", EntityType.BODY));
     }
@@ -589,6 +593,23 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
                     "tools" : qUnion(rest),
                     "operationType" : BooleanOperationType.UNION
                 });
+
+        // 自检：合并后必须只剩 1 个实体（qUnion(newBodies) 惰性重解析，
+        // 工具已被消耗，只解析出存活的目标体）。多于 1 个即有几何块未缝合，
+        // 报出各实体的包围盒以便定位
+        const merged = evaluateQuery(context, qUnion(newBodies));
+        if (size(merged) > 1)
+        {
+            var detail = "";
+            for (var m = 0; m < size(merged); m += 1)
+            {
+                const box = evBox3d(context, { "entities" : merged[m] });
+                detail = detail ~ " | 实体" ~ toString(m + 1) ~ " min="
+                        ~ toString(box.minCorner) ~ " max=" ~ toString(box.maxCorner);
+            }
+            throw regenError("[combine-two-parts] 合并后仍有 " ~ toString(size(merged))
+                    ~ " 个实体（端面内填充与端面外几何未缝合）：" ~ detail);
+        }
     }
 
     // 7. 轴向孔：从所选端面沿轴向向内切孔（可贯穿或指定深度），
@@ -1005,6 +1026,8 @@ const CTC_BOUNDS =
 // 端面底领尺寸（固定）：圆柱段轴向厚度 1mm，锥体收拢段最厚 2mm
 const COLLAR_CYL_LEN = 1 * millimeter;
 const COLLAR_CONE_LEN = 2 * millimeter;
+// 填充体伸出端面、伸入底领实心盘的重叠长度（保证布尔缝合的体积重叠）
+const FILL_OVERLAP = 0.5 * millimeter;
 
 const FLANGE_O_BOUNDS =
 {
