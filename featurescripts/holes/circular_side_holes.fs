@@ -382,9 +382,9 @@ function getRingHoleThrough(definition is map, ring is number)
 
 /**
  * 切一圈孔：
- *   草图平面包含轴线（与 pulley_roller makeCollar 相同构造：法向 = 轴向、
- *   x = 轴向、y = 径向）。孔心在 (z, outerR)——即外表面上。
- *   沿 -y（径向向内）拉伸深度，绕轴 circularPattern，减切目标实体。
+ *   孔心在外表面（轴心 + 轴向 z + 径向 outerR）。草图平面法向 = 径向
+ *   （即孔轴方向）、x = 轴向；圆画在草图原点，沿 -normal（径向向心）
+ *   拉伸深度，绕轴 circularPattern，减切目标实体。
  */
 function cutRingHoles(context is Context, ringId is Id, definition is map, cyl is map, spec is map)
 {
@@ -392,31 +392,31 @@ function cutRingHoles(context is Context, ringId is Id, definition is map, cyl i
     const center = cyl.center;
     const outerR = cyl.outerR;
 
-    // 草图平面：原点 = 圆心，法向垂直于轴（包含轴线的平面）
-    // x 沿轴（孔的轴向位置），y 沿径向（孔的径向位置）
+    // 孔心（3D）：轴心 + 轴向偏移 spec.z + 径向偏移 outerR（外表面上）
     const radialDir = perpendicularVector(axis);
-    const skPlane = plane(center, radialDir, axis);
-
-    // 孔心（草图坐标）：x = 轴向位置 z，y = 外表面半径 outerR
-    const holeCenter = vector(spec.z, outerR);
+    const holeCenter = center + axis * spec.z + radialDir * outerR;
     const holeR = spec.diameter / 2;
 
     // 深度：通孔打到轴线（= outerR），否则用户深度
     const depth = spec.through ? outerR : spec.depth;
 
+    // 草图平面：法向 = 径向（即孔轴方向），原点 = 孔心，x 沿轴向。
+    // 孔轴垂直于草图平面，沿 -normal（径向向心）拉伸。
+    const skPlane = plane(holeCenter, radialDir, axis);
+
     const sk = newSketchOnPlane(context, ringId + "sketch", {
                 "sketchPlane" : skPlane
             });
     skCircle(sk, "hole", {
-                "center" : holeCenter,
+                "center" : vector(0, 0),
                 "radius" : holeR
             });
     skSolve(sk);
 
-    // 沿 -y（径向向内）拉伸
+    // 沿 -normal（径向向心）拉伸
     opExtrude(context, ringId + "extrude", {
                 "entities" : qSketchRegion(ringId + "sketch"),
-                "direction" : skPlane->yAxis() * -1,
+                "direction" : skPlane.normal * -1,
                 "endBound" : BoundingType.BLIND,
                 "endDepth" : depth
             });
