@@ -62,6 +62,10 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
                      "Description" : "Belt tooth standard for pulley 1 (GT2 2M/3M/5M/8M, HTD 3M/5M)" }
         definition.profile1 is ToothProfile;
 
+        annotation { "Name" : "Pulley flange style",
+                     "Description" : "Conical (default): COTS-style conical wall rising past the tooth tip. Flat cylinder: 1mm-thick cylinder at the flange diameter (larger than tooth tip) instead of the cone" }
+        definition.flangeStyle is FlangeStyle;
+
         annotation { "Name" : "End collar overhang",
                      "Description" : "How far the collar extends beyond the tube OD / pulley-1 flange diameter at the end face (0 = flush). Collar: fixed 1mm cylinder + max-2mm taper; pulley flanges use COTS standard sizes" }
         isLength(definition.flangeOverhang, FLANGE_O_BOUNDS);
