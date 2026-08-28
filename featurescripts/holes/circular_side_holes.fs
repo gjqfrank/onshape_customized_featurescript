@@ -67,9 +67,15 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
     annotation { "Name" : "Cylinder end face", "Description" : "End face (disc or annulus) that defines the cylinder axis and outer radius", "Filter" : GeometryType.PLANE && EntityType.FACE, "MaxNumberOfPicks" : 1 }
     definition.endFace is Query;
 
-    // 圈数
-    annotation { "Name" : "Ring count", "Description" : "Number of hole rings (1-4)" }
-    isInteger(definition.ringCount, { (unitless) : [1, 2, 4] } as IntegerBoundSpec);
+    // 圈数（布尔级联：Add ring 2/3/4）
+    annotation { "Name" : "Add ring 2", "Description" : "Add a second ring of holes" }
+    definition.addRing2 is boolean;
+
+    annotation { "Name" : "Add ring 3", "Description" : "Add a third ring of holes" }
+    definition.addRing3 is boolean;
+
+    annotation { "Name" : "Add ring 4", "Description" : "Add a fourth ring of holes" }
+    definition.addRing4 is boolean;
 
     // 第 1 圈
     annotation { "Name" : "Ring 1 distance from end face", "Description" : "Axial distance of ring 1 hole centers from the end face" }
@@ -91,7 +97,7 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
     }
 
     // 第 2-4 圈：条件显示（ringCount 足够时）
-    if (definition.ringCount - 1 >= 1)
+    if (definition.addRing2)
     {
         annotation { "Name" : "Ring 2 distance from ring 1", "Description" : "Axial distance of ring 2 hole centers from ring 1" }
         isLength(definition.ring2Distance, RING_DIST_BOUNDS);
@@ -112,7 +118,7 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
         }
     }
 
-    if (definition.ringCount - 2 >= 1)
+    if (definition.addRing3)
     {
         annotation { "Name" : "Ring 3 distance from ring 2" }
         isLength(definition.ring3Distance, RING_DIST_BOUNDS);
@@ -133,7 +139,7 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
         }
     }
 
-    if (definition.ringCount - 3 >= 1)
+    if (definition.addRing4)
     {
         annotation { "Name" : "Ring 4 distance from ring 3" }
         isLength(definition.ring4Distance, RING_DIST_BOUNDS);
@@ -246,7 +252,8 @@ function buildRingSpecs(definition is map) returns array
     var specs = [];
     var z = 0 * millimeter;
 
-    for (var i = 0; i < definition.ringCount; i += 1)
+    const ringCount = 1 + (definition.addRing2 ? 1 : 0) + (definition.addRing3 ? 1 : 0) + (definition.addRing4 ? 1 : 0);
+    for (var i = 0; i < ringCount; i += 1)
     {
         const dist = i == 0 ? definition.ring1Distance : getRingDistance(definition, i);
         z = z + dist;
