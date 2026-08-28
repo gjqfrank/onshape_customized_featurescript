@@ -666,8 +666,9 @@ function toothScale(t is number, profile is map, pd is ValueWithUnits) returns n
 {
     const pts = computeGtToothPoints(t, profile);
     const tipR = (pd / 2 - profile["U"]) / millimeter;
-    // norm() 对 vector 的重载在此上下文解析为 map，改为显式计算模长
-    const dNorm = sqrt(pts.D[0] ^ 2 + pts.D[1] ^ 2);
+    // pts.D 为 Vector：先取模长（norm 对 Vector 直接可用，见
+    // getArcMidPointShorter），再除以 millimeter 转为无量纲数值
+    const dNorm = norm(pts.D) / millimeter;
     return tipR / dNorm;
 }
 
@@ -723,8 +724,7 @@ function drawPulleyTeeth(context is Context, id is Id, sketchPlane is Plane, t i
     }
     skSolve(sk);
 
-    const abmNorm = sqrt(pts.ABM[0] ^ 2 + pts.ABM[1] ^ 2);
-    return abmNorm * scale * millimeter;
+    return norm(pts.ABM) * scale;
 }
 
 /**
@@ -734,8 +734,7 @@ function pulleyRootRadius(t is number, profile is map, pd is ValueWithUnits) ret
 {
     const pts = computeGtToothPoints(t, profile);
     const scale = toothScale(t, profile, pd);
-    const abmNorm = sqrt(pts.ABM[0] ^ 2 + pts.ABM[1] ^ 2);
-    return abmNorm * scale * millimeter;
+    return norm(pts.ABM) * scale;
 }
 
 /**
