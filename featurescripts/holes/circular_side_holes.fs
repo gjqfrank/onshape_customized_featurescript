@@ -58,6 +58,8 @@ annotation {
     }
 export const circularSideHoles = defineFeature(function(context is Context, id is Id, definition is map)
 {
+    precondition
+    {
     // 目标实体（Filter 写法参考 belt_official.fs）
     annotation { "Name" : "Target body", "Description" : "Body to cut (cylinder or tube)", "Filter" : EntityType.BODY, "MaxNumberOfPicks" : 1 }
     definition.body is Query;
@@ -151,6 +153,7 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
             annotation { "Name" : "Ring 4 hole depth" }
             isLength(definition.depth4, HOLE_DEPTH_BOUNDS);
         }
+    }
     }
 
     // ---------------- 运行逻辑 ----------------
