@@ -16,6 +16,26 @@ export enum FlangeStyle
 const FLAT_FLANGE_LEN = 1 * millimeter;
 
 /**
+ * 轴向孔类型：无 / FRC 常用 1/2 六角（对边距 12.7mm）/ 3/8 六角（对边距
+ * 9.525mm）/ 自定义半径圆孔。
+ */
+export enum HoleType
+{
+    annotation { "Name" : "None" }
+    NONE,
+    annotation { "Name" : "1/2 hex (FRC)" }
+    HEX_1_2,
+    annotation { "Name" : "3/8 hex (FRC)" }
+    HEX_3_8,
+    annotation { "Name" : "Custom circle" }
+    CIRCLE
+}
+
+// FRC 六角轴孔对边距（across flats）：1/2 inch = 12.7mm，3/8 inch = 9.525mm
+const HEX_HALF_AF = 0.5 * inch;
+const HEX_3_8_AF = 0.375 * inch;
+
+/**
  * Pulley Roller - 复合带轮滚轮
  *
  * 在一根空心管滚轮的端部圆环面上生成复合带轮零件（一个 part）：
@@ -37,6 +57,9 @@ const FLAT_FLANGE_LEN = 1 * millimeter;
  *      延伸到带轮 1 的法兰（平齐衔接）。底领 + 引导段 + 管内填充与其余
  *      新几何全部合并为一个 part
  *   5. 全部新几何合并为单一零件（独立 part，不与原管子合并）
+ *   6. 可选轴向孔：从零件最外端面向内切孔，可贯穿或指定深度；孔型可选
+ *      FRC 常用 1/2 六角（对边距 12.7mm）/ 3/8 六角（对边距 9.525mm）/
+ *      自定义半径圆孔；孔中心可偏离零件轴线（Hole offset）
  *
  * 齿形解析公式来自 trilobio 的 "Timing Belt Pulley"（GT2 2M/3M）；
  * GT2 5M/8M 与 HTD 3M/5M 采用各标准公布的名义齿形参数（近似）。
@@ -136,6 +159,26 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         annotation { "Name" : "Pulley 4 width",
                      "Description" : "Used when Number of pulleys is 4" }
         isLength(definition.width4, WIDTH_BOUNDS);
+
+        annotation { "Name" : "Axial hole type",
+                     "Description" : "Hole along the part axis starting at the outer end face. 1/2 hex / 3/8 hex = FRC hex shaft bores (across flats 12.7 / 9.525mm); Custom circle = user radius" }
+        definition.holeType is HoleType;
+
+        annotation { "Name" : "Hole through all",
+                     "Description" : "Cut the hole through the entire part (ignores Hole depth)" }
+        definition.holeThrough is boolean;
+
+        annotation { "Name" : "Hole depth",
+                     "Description" : "Hole depth from the outer end face (used when Hole through all is off)" }
+        isLength(definition.holeDepth, HOLE_DEPTH_BOUNDS);
+
+        annotation { "Name" : "Hole radius",
+                     "Description" : "Radius of the custom circular hole (used when Axial hole type is Custom circle)" }
+        isLength(definition.holeRadius, HOLE_R_BOUNDS);
+
+        annotation { "Name" : "Hole offset",
+                     "Description" : "Distance the hole center is offset from the part axis (0 = centered)" }
+        isLength(definition.holeOffset, HOLE_OFF_BOUNDS);
     }
     {
         doPulleyRoller(context, id, definition);
@@ -164,7 +207,12 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         "width3" : 6 * millimeter,
         "ctc3" : 20 * millimeter,
         "teeth4" : 24,
-        "width4" : 6 * millimeter
+        "width4" : 6 * millimeter,
+        "holeType" : HoleType.HEX_1_2,
+        "holeThrough" : true,
+        "holeDepth" : 20 * millimeter,
+        "holeRadius" : 6.35 * millimeter,
+        "holeOffset" : 0 * millimeter
     });
 
 function doPulleyRoller(context is Context, id is Id, definition is map)
@@ -517,6 +565,61 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
                     "operationType" : BooleanOperationType.UNION
                 });
     }
+    const finalBody = size(allNew) > 1 ? qCreatedBy(id + "union", EntityType.BODY) : allNew[0];
+
+    // 7. 轴向孔：从零件最外端面沿 -axis 向内切孔（可贯穿或指定深度），
+    //    孔中心可偏离轴线（沿垂直于轴的固定方向偏移 holeOffset）
+    if (definition.holeType != HoleType.NONE)
+    {
+        // 孔轴向起点：零件最外端（最后一个带轮法兰外端面）；贯穿时深度覆盖
+        // 全长（端面外填塞段 + 管内填充段）
+        const zStart = totalLen;
+        const depth = definition.holeThrough ? (totalLen + definition.fillLength) : definition.holeDepth;
+
+        const holeSk = newSketchOnPlane(context, id + "holeSketch", {
+                    "sketchPlane" : plane(center + axis * zStart, axis)
+                });
+        if (definition.holeType == HoleType.CIRCLE)
+        {
+            skCircle(holeSk, "hole", {
+                        "center" : vector(definition.holeOffset, 0 * millimeter),
+                        "radius" : definition.holeRadius
+                    });
+        }
+        else
+        {
+            // 六角孔：对边距 AF，外接圆半径 R = AF / sqrt(3)，顶点角 0/60/.../300
+            const af = definition.holeType == HoleType.HEX_1_2 ? HEX_HALF_AF : HEX_3_8_AF;
+            const hexR = af / sqrt(3);
+            var hexPts = [];
+            for (var v = 0; v < 6; v += 1)
+            {
+                const ang = v * PI / 3;
+                hexPts = append(hexPts, vector(definition.holeOffset + hexR * cos(ang), hexR * sin(ang)));
+            }
+            for (var e = 0; e < 6; e += 1)
+            {
+                skLineSegment(holeSk, "hex" ~ toString(e), {
+                            "start" : hexPts[e],
+                            "end" : hexPts[(e + 1) % 6]
+                        });
+            }
+        }
+        skSolve(holeSk);
+
+        opExtrude(context, id + "holeExtrude", {
+                    "entities" : qSketchRegion(id + "holeSketch"),
+                    "direction" : -axis,
+                    "endBound" : BoundingType.BLIND,
+                    "endDepth" : depth
+                });
+
+        opBoolean(context, id + "holeCut", {
+                    "targets" : finalBody,
+                    "tools" : qCreatedBy(id + "holeExtrude", EntityType.BODY),
+                    "operationType" : BooleanOperationType.SUBTRACTION
+                });
+    }
 }
 
 /**
@@ -825,6 +928,24 @@ const WIDTH_BOUNDS =
 {
             (millimeter) : [2, 6, 100],
             (inch) : 0.25
+        } as LengthBoundSpec;
+
+const HOLE_DEPTH_BOUNDS =
+{
+            (millimeter) : [0.1, 20, 1000],
+            (inch) : 0.01
+        } as LengthBoundSpec;
+
+const HOLE_R_BOUNDS =
+{
+            (millimeter) : [1, 6.35, 100],
+            (inch) : 0.05
+        } as LengthBoundSpec;
+
+const HOLE_OFF_BOUNDS =
+{
+            (millimeter) : [0, 0, 50],
+            (inch) : 0
         } as LengthBoundSpec;
 
 const CTC_BOUNDS =
