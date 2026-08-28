@@ -595,16 +595,16 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
             {
                 continue;
             }
-            const pair = evaluateQuery(context, qUnion([target, tool[0]]));
-            if (size(pair) < 2)
+            // 单次合并失败（如 tool 与目标现场解析为同一实体，opBoolean 报
+            // "Need at least two parts"）不致命：静默跳过，由末尾自检兜底
+            try
             {
-                continue;
+                opBoolean(context, id + ("union" ~ toString(k)), {
+                            "targets" : target,
+                            "tools" : tool[0],
+                            "operationType" : BooleanOperationType.UNION
+                        });
             }
-            opBoolean(context, id + ("union" ~ toString(k)), {
-                        "targets" : target,
-                        "tools" : tool[0],
-                        "operationType" : BooleanOperationType.UNION
-                    });
         }
 
         // 自检：合并后必须只剩 1 个实体（qUnion(newBodies) 惰性重解析，
