@@ -59,40 +59,40 @@ annotation {
 export const circularSideHoles = defineFeature(function(context is Context, id is Id, definition is map)
 {
     // 目标实体（Filter 写法参考 belt_official.fs）
-    annotation { "Name" : "Target body", "Description" : "要打孔的实体（圆柱/管）", "Filter" : EntityType.BODY, "MaxNumberOfPicks" : 1 }
+    annotation { "Name" : "Target body", "Description" : "Body to cut (cylinder or tube)", "Filter" : EntityType.BODY, "MaxNumberOfPicks" : 1 }
     definition.body is Query;
 
     // 圆柱端面（圆或圆环均可）
-    annotation { "Name" : "Cylinder end face", "Description" : "圆柱端面（圆或圆环），用于确定轴线与外径", "Filter" : GeometryType.PLANE && EntityType.FACE, "MaxNumberOfPicks" : 1 }
+    annotation { "Name" : "Cylinder end face", "Description" : "End face (disc or annulus) that defines the cylinder axis and outer radius", "Filter" : GeometryType.PLANE && EntityType.FACE, "MaxNumberOfPicks" : 1 }
     definition.endFace is Query;
 
     // 圈数
-    annotation { "Name" : "Ring count", "Description" : "孔圈数（1-4）" }
+    annotation { "Name" : "Ring count", "Description" : "Number of hole rings (1-4)" }
     isInteger(definition.ringCount, { (unitless) : [1, 2, 4] } as IntegerBoundSpec);
 
     // 第 1 圈
-    annotation { "Name" : "Ring 1 distance from end face", "Description" : "第 1 圈孔中心离所选端面的轴向距离" }
+    annotation { "Name" : "Ring 1 distance from end face", "Description" : "Axial distance of ring 1 hole centers from the end face" }
     isLength(definition.ring1Distance, RING_DIST_BOUNDS);
 
-    annotation { "Name" : "Ring 1 hole count", "Description" : "第 1 圈孔数（沿圆周均匀分布）" }
+    annotation { "Name" : "Ring 1 hole count", "Description" : "Holes in ring 1 (evenly distributed)" }
     isInteger(definition.count1, HOLE_COUNT_BOUNDS);
 
     annotation { "Name" : "Ring 1 hole diameter" }
     isLength(definition.dia1, HOLE_DIA_BOUNDS);
 
-    annotation { "Name" : "Ring 1 through to axis", "Description" : "通孔：直接打到圆柱轴线（忽略深度）" }
+    annotation { "Name" : "Ring 1 through to axis", "Description" : "Cut through to the cylinder axis (depth ignored)" }
     definition.through1 is boolean;
 
     if (!definition.through1)
     {
-        annotation { "Name" : "Ring 1 hole depth", "Description" : "孔深（径向，从外表面向轴心）" }
+        annotation { "Name" : "Ring 1 hole depth", "Description" : "Hole depth (radial, from outer surface toward axis)" }
         isLength(definition.depth1, HOLE_DEPTH_BOUNDS);
     }
 
     // 第 2-4 圈：条件显示（ringCount 足够时）
     if (definition.ringCount > 1)
     {
-        annotation { "Name" : "Ring 2 distance from ring 1", "Description" : "第 2 圈孔中心离第 1 圈孔中心的轴向距离" }
+        annotation { "Name" : "Ring 2 distance from ring 1", "Description" : "Axial distance of ring 2 hole centers from ring 1" }
         isLength(definition.ring2Distance, RING_DIST_BOUNDS);
 
         annotation { "Name" : "Ring 2 hole count" }
