@@ -606,15 +606,15 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         else
         {
             // 六角孔：对边距 AF，外接圆半径 R = AF / sqrt(3)，顶点角 0/60/.../300。
-            // 全部按无量纲数值计算（同 drawPulleyTeeth 的模式），最后乘 millimeter
-            // 恢复单位 —— 避免 "长度 * cos(...)" 触发单位向三角函数参数反向传播
+            // 本标准库的 cos/sin 接受带角度单位的参数（同 trilobio 齿形代码的
+            // cos(radian * ...) 写法），故乘 radian；顶点坐标单位最后恢复
             const af = definition.hexSize == HexSize.HEX_1_2 ? HEX_HALF_AF : HEX_3_8_AF;
             const off = definition.holeOffset / millimeter; // 无量纲（mm 数值）
             const hexR = af / millimeter / sqrt(3); // 无量纲外接圆半径（mm 数值）
             var hexPts = [];
             for (var v = 0; v < 6; v += 1)
             {
-                const ang = v * PI / 3;
+                const ang = radian * v * PI / 3;
                 hexPts = append(hexPts, vector((off + hexR * cos(ang)) * millimeter, (hexR * sin(ang)) * millimeter));
             }
             for (var e = 0; e < 6; e += 1)
