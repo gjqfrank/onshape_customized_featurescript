@@ -255,7 +255,15 @@ function buildRingSpecs(definition is map) returns array
     const ringCount = 1 + (definition.addRing2 ? 1 : 0) + (definition.addRing3 ? 1 : 0) + (definition.addRing4 ? 1 : 0);
     for (var i = 0; i < ringCount; i += 1)
     {
-        const dist = i == 0 ? definition.ring1Distance : getRingDistance(definition, i);
+        var dist;
+        if (i == 0)
+        {
+            dist = definition.ring1Distance;
+        }
+        else
+        {
+            dist = getRingDistance(definition, i);
+        }
         z = z + dist;
 
         specs = append(specs, {
