@@ -233,9 +233,10 @@ function getCylinderFromFace(context is Context, face is Query)
         }
     }
 
+    // 圆边定义的圆心在 coordSystem.origin（无 center 字段，参考 integer_belt_joshtargo.fs）
     return {
                 "axis" : facePlane.normal,
-                "center" : outer.center,
+                "center" : outer.coordSystem.origin,
                 "outerR" : outer.radius
             };
 }
