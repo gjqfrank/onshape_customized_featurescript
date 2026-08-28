@@ -53,10 +53,11 @@ const HEX_3_8_AF = 0.375 * inch;
  *      延伸到带轮 1 的法兰（平齐衔接）。底领 + 引导段 + 管内填充与其余
  *      新几何全部合并为一个 part
  *   5. 全部新几何合并为单一零件（独立 part，不与原管子合并）
- *   6. 可选轴向孔（勾选 Add axial hole 后才显示相关参数）：从零件最外端面
- *      向内切孔，可贯穿或指定深度（贯穿时不显示深度）；孔型可选 FRC 常用
- *      1/2 六角（对边距 12.7mm）/ 3/8 六角（对边距 9.525mm）/ 自定义半径
- *      圆孔（勾选 Custom circular hole 后才显示半径）；孔中心可偏离零件轴线
+ *   6. 可选轴向孔（勾选 Add axial hole 后才显示相关参数）：可选从带轮侧
+ *      外端面（默认）或管端侧填充端面开始打孔，可贯穿或指定深度（贯穿时
+ *      不显示深度）；孔型可选 FRC 常用 1/2 六角（对边距 12.7mm）/ 3/8 六角
+ *      （对边距 9.525mm）/ 自定义半径圆孔（勾选 Custom circular hole 后才
+ *      显示半径）；孔中心可偏离零件轴线
  *
  * 齿形解析公式来自 trilobio 的 "Timing Belt Pulley"（GT2 2M/3M）；
  * GT2 5M/8M 与 HTD 3M/5M 采用各标准公布的名义齿形参数（近似）。
@@ -158,11 +159,14 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         isLength(definition.width4, WIDTH_BOUNDS);
 
         annotation { "Name" : "Add axial hole",
-                     "Description" : "Cut a hole along the part axis starting at the outer end face. All hole parameters below appear only when this is checked" }
+                     "Description" : "Cut a hole along the part axis. All hole parameters below appear only when this is checked" }
         definition.addHole is boolean;
 
         if (definition.addHole)
         {
+            annotation { "Name" : "Hole from pulley end",
+                         "Description" : "Start the hole at the outer pulley end face (default). Uncheck to start from the tube-side end face (the filled plug end inside the tube)" }
+            definition.holeFromPulleyEnd is boolean;
             annotation { "Name" : "Custom circular hole",
                          "Description" : "Use a custom-radius circular hole instead of an FRC hex bore" }
             definition.holeCircle is boolean;
@@ -225,6 +229,7 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         "teeth4" : 24,
         "width4" : 6 * millimeter,
         "addHole" : true,
+        "holeFromPulleyEnd" : true,
         "holeCircle" : false,
         "hexSize" : HexSize.HEX_1_2,
         "holeThrough" : true,
@@ -584,17 +589,20 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
                 });
     }
 
-    // 7. 轴向孔：从零件最外端面沿 -axis 向内切孔（可贯穿或指定深度），
+    // 7. 轴向孔：从所选端面沿轴向向内切孔（可贯穿或指定深度），
     //    孔中心可偏离轴线（沿垂直于轴的固定方向偏移 holeOffset）
     if (definition.addHole)
     {
-        // 孔轴向起点：零件最外端（最后一个带轮法兰外端面）；贯穿时深度覆盖
-        // 全长（端面外填塞段 + 管内填充段）
-        const zStart = totalLen;
+        // 孔起始端：默认从带轮侧最外端（z = totalLen）沿 -axis 切入；
+        // 关闭 "Hole from pulley end" 时从管端侧（z = -fillLength）沿 +axis
+        // 切入。贯穿时深度覆盖全长（两个方向的轴向范围相同）
+        const fromPulleyEnd = definition.holeFromPulleyEnd;
+        const zStart = fromPulleyEnd ? totalLen : -definition.fillLength;
+        const cutDir = fromPulleyEnd ? -axis : axis;
         const depth = definition.holeThrough ? (totalLen + definition.fillLength) : definition.holeDepth;
 
         const holeSk = newSketchOnPlane(context, id + "holeSketch", {
-                    "sketchPlane" : plane(center + axis * zStart, axis)
+                    "sketchPlane" : plane(center + axis * zStart, cutDir)
                 });
         if (definition.holeCircle)
         {
@@ -629,7 +637,7 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
 
         opExtrude(context, id + "holeExtrude", {
                     "entities" : qSketchRegion(id + "holeSketch"),
-                    "direction" : -axis,
+                    "direction" : cutDir,
                     "endBound" : BoundingType.BLIND,
                     "endDepth" : depth
                 });
