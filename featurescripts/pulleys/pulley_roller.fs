@@ -2,6 +2,20 @@ FeatureScript 3044;
 import(path : "onshape/std/common.fs", version : "3044.0");
 
 /**
+ * 带轮法兰样式：锥形墙（COTS 标准，默认）或平圆柱（固定 1mm 厚）。
+ */
+export enum FlangeStyle
+{
+    annotation { "Name" : "Conical (COTS)" }
+    CONICAL,
+    annotation { "Name" : "Flat cylinder (1mm)" }
+    FLAT_CYLINDER
+}
+
+// 平圆柱法兰样式（固定）：轴向厚度 1mm，直径为法兰直径（> 齿顶）
+const FLAT_FLANGE_LEN = 1 * millimeter;
+
+/**
  * Pulley Roller - 复合带轮滚轮
  *
  * 在一根空心管滚轮的端部圆环面上生成复合带轮零件（一个 part）：
@@ -807,20 +821,6 @@ const CTC_BOUNDS =
 // 端面底领尺寸（固定）：圆柱段轴向厚度 1mm，锥体收拢段最厚 2mm
 const COLLAR_CYL_LEN = 1 * millimeter;
 const COLLAR_CONE_LEN = 2 * millimeter;
-
-// 平圆柱法兰样式（固定）：轴向厚度 1mm，直径为法兰直径（> 齿顶）
-const FLAT_FLANGE_LEN = 1 * millimeter;
-
-/**
- * 带轮法兰样式：锥形墙（COTS 标准，默认）或平圆柱（1mm 厚）。
- */
-export enum FlangeStyle
-{
-    annotation { "Name" : "Conical (COTS)" }
-    CONICAL,
-    annotation { "Name" : "Flat cylinder (1mm)" }
-    FLAT_CYLINDER
-}
 
 const FLANGE_O_BOUNDS =
 {
