@@ -1,4 +1,4 @@
-FeatureScript 1605;
+FeatureScript 3044;
 
 /**
  * 圆柱侧面环形排孔 (Circular Side Holes)
@@ -19,7 +19,7 @@ FeatureScript 1605;
  * pulley_roller / alexkempen 的 targets+tools SUBTRACTION 写法。
  */
 
-import(path : "onshape/std/common.fs", version : "1605.0");
+import(path : "onshape/std/common.fs", version : "3044.0");
 
 // ---------------------------------------------------------------
 // 输入范围
