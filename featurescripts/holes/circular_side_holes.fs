@@ -52,6 +52,10 @@ const HOLE_COUNT_BOUNDS =
 // 主特征
 // ---------------------------------------------------------------
 
+annotation {
+        "Feature Type Name" : "Circular side holes",
+        "Feature Type Description" : "在圆柱（管）侧面上打多圈沿圆周均匀分布的径向孔：选择实体与端面（圆或圆环），每圈独立设置孔数 / 直径 / 深度 / 通孔，圈间距沿轴向。"
+    }
 export const circularSideHoles = defineFeature(function(context is Context, id is Id, definition is map)
 {
     // 目标实体（Filter 写法参考 belt_official.fs）
