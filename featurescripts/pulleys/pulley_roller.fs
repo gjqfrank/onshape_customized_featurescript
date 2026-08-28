@@ -579,20 +579,33 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     makeCollar(context, collarId, center, axis, COLLAR_CYL_LEN, COLLAR_CONE_LEN, collarFace, leadR);
     newBodies = append(newBodies, qCreatedBy(collarId + "revolve", EntityType.BODY));
 
-    // 6. 合并：新几何（填充 + 主轴 + 各带轮 + 挡边 + 底领）合并为单一零件，不与原管子合并
+    // 6. 合并：新几何（填充 + 主轴 + 引导段 + 各带轮 + 挡边 + 底领）合并为单一零件，不与原管子合并。
+    //    一次性多工具 opBoolean 在实体较多时会漏缝个别存在真实体积重叠的工具
+    //    （实测留下 2 个 part），改为 pairwise 顺序合并：每次把一个实体并入
+    //    目标体，每一对重叠都被显式缝合。tool 为空（已被消耗）或与目标解析到
+    //    同一实体时跳过该次合并
     const allNew = evaluateQuery(context, qUnion(newBodies));
     if (size(allNew) > 1)
     {
-        var rest = [allNew[1]];
-        for (var k = 2; k < size(allNew); k += 1)
+        var target = allNew[0];
+        for (var k = 1; k < size(allNew); k += 1)
         {
-            rest = append(rest, allNew[k]);
+            const tool = evaluateQuery(context, allNew[k]);
+            if (size(tool) == 0)
+            {
+                continue;
+            }
+            const pair = evaluateQuery(context, qUnion([target, tool[0]]));
+            if (size(pair) < 2)
+            {
+                continue;
+            }
+            opBoolean(context, id + ("union" ~ toString(k)), {
+                        "targets" : target,
+                        "tools" : tool[0],
+                        "operationType" : BooleanOperationType.UNION
+                    });
         }
-        opBoolean(context, id + "union", {
-                    "targets" : allNew[0],
-                    "tools" : qUnion(rest),
-                    "operationType" : BooleanOperationType.UNION
-                });
 
         // 自检：合并后必须只剩 1 个实体（qUnion(newBodies) 惰性重解析，
         // 工具已被消耗，只解析出存活的目标体）。多于 1 个即有几何块未缝合，
