@@ -26,8 +26,9 @@ const FLAT_FLANGE_LEN = 1 * millimeter;
  *      每个带轮两侧有挡边（法兰）防止带滑落，样式可选（Flange style）：
  *      锥形（默认，COTS 标准尺寸）：从齿顶锥形升起超过齿顶并保持；
  *      平圆柱：固定 1mm 厚、直径为法兰直径（> 齿顶）的圆柱。相邻两带轮
- *      之间的接口：法兰直径取两者较大值（厚度各保持生效值），两法兰之间
- *      用同直径圆柱填充
+ *      之间的接口：法兰直径取两者较大值；锥形样式下两法兰厚度各保持
+ *      生效值、法兰之间用同直径圆柱填充，平圆柱样式下两侧共用一个
+ *      1mm 法兰（接口最小中心距相应少 1mm）
  *   4. 端面底领：贴端面先是固定 1mm 厚的圆柱（盖住圆环面外环边），再以
  *      最厚 2mm 的锥体收拢到带轮 1 法兰直径；之后以该直径的圆柱引导段一直
  *      延伸到带轮 1 的法兰（平齐衔接）。底领 + 引导段 + 管内填充与其余
@@ -315,15 +316,17 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     }
     for (var i = 1; i < n; i += 1)
     {
-        // 法兰允许外端面恰好重合（交于一个圆环，体积交叠为零），但不允许
-        // 真正交叠：接口法兰直径取两者较大值、厚度各保持自身 COTS 值，
-        // 最小 CTC = 半宽之和 + 两侧法兰各自厚度（此时两法兰外端面共面）
-        const minCtc = (widths[i] + widths[i - 1]) / 2 + effFts[i - 1] + effFts[i];
+        // 锥形样式：法兰允许外端面恰好重合（交于一个圆环，体积交叠为零），
+        // 但不允许真正交叠：接口法兰直径取两者较大值、厚度各保持生效值，
+        // 最小 CTC = 半宽之和 + 两侧法兰各自厚度（此时两法兰外端面共面）。
+        // 平圆柱样式：相邻两侧 1mm 法兰共用一个，最小 CTC = 半宽之和 + 1mm
+        const minCtc = (widths[i] + widths[i - 1]) / 2
+                + (flatFlange ? FLAT_FLANGE_LEN : effFts[i - 1] + effFts[i]);
         if (z[i] - z[i - 1] < minCtc - 1e-6 * meter)
         {
             throw regenError("带轮 " ~ toString(i) ~ " 与带轮 " ~ toString(i + 1)
-                    ~ " 中心距太小，法兰交叠。最小值（两法兰外端面恰好重合）为 "
-                    ~ toString(minCtc) ~ "。", ["ctc" ~ toString(i)]);
+                    ~ " 中心距太小，法兰交叠。最小值为 " ~ toString(minCtc)
+                    ~ (flatFlange ? "（两侧共用一个 1mm 法兰）。" : "（两法兰外端面恰好重合）。"), ["ctc" ~ toString(i)]);
         }
     }
     for (var i = 0; i < n; i += 1)
@@ -433,24 +436,16 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
 
         if (i < n - 1)
         {
-            // 接口 i-(i+1)：法兰直径取两者较大值，厚度各保持生效值
+            // 接口 i-(i+1)：法兰直径取两者较大值
             const frIface = max(flangeRs[i], flangeRs[i + 1]);
 
-            // 带轮 i 右侧法兰：从右端面沿 +axis 伸出 effFts[i] 厚
-            const flangeIdR = id + ("flangeR" ~ toString(i));
-            makeFlange(context, flangeIdR, center, axis, z[i] + widths[i] / 2, axis, effFts[i], tipRs[i], frIface, flatFlange);
-            newBodies = append(newBodies, qCreatedBy(flangeIdR + "revolve", EntityType.BODY));
-
-            // 带轮 i+1 左侧法兰：从左端面沿 -axis 伸出 effFts[i+1] 厚
-            const flangeIdL = id + ("flangeL" ~ toString(i + 1));
-            makeFlange(context, flangeIdL, center, axis, z[i + 1] - widths[i + 1] / 2, -axis, effFts[i + 1], tipRs[i + 1], frIface, flatFlange);
-            newBodies = append(newBodies, qCreatedBy(flangeIdL + "revolve", EntityType.BODY));
-
-            // 填充圆柱：与接口法兰同直径，位于两个法兰外端面之间
-            const cylStart = z[i] + widths[i] / 2 + effFts[i];
-            const cylLen = z[i + 1] - widths[i + 1] / 2 - effFts[i + 1] - cylStart;
-            if (cylLen > 0 * millimeter)
+            if (flatFlange)
             {
+                // 平圆柱样式：相邻两侧 1mm 法兰共用一个 —— 不再各自生成，
+                // 接口缝隙（含共用法兰，缝隙 >= 1mm 由校验保证）整体用与
+                // 法兰同直径的圆柱填充（直径一致，等效于共用法兰 + 填充）
+                const cylStart = z[i] + widths[i] / 2;
+                const cylLen = z[i + 1] - widths[i + 1] / 2 - cylStart;
                 const gapSketch = newSketchOnPlane(context, id + ("gapSketch" ~ toString(i)), {
                             "sketchPlane" : plane(center + axis * cylStart, axis)
                         });
@@ -466,6 +461,41 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
                             "endDepth" : cylLen
                         });
                 newBodies = append(newBodies, qCreatedBy(id + ("gapExtrude" ~ toString(i)), EntityType.BODY));
+            }
+            else
+            {
+                // 锥形样式：厚度各保持生效值
+                // 带轮 i 右侧法兰：从右端面沿 +axis 伸出 effFts[i] 厚
+                const flangeIdR = id + ("flangeR" ~ toString(i));
+                makeFlange(context, flangeIdR, center, axis, z[i] + widths[i] / 2, axis, effFts[i], tipRs[i], frIface, flatFlange);
+                newBodies = append(newBodies, qCreatedBy(flangeIdR + "revolve", EntityType.BODY));
+
+                // 带轮 i+1 左侧法兰：从左端面沿 -axis 伸出 effFts[i+1] 厚
+                const flangeIdL = id + ("flangeL" ~ toString(i + 1));
+                makeFlange(context, flangeIdL, center, axis, z[i + 1] - widths[i + 1] / 2, -axis, effFts[i + 1], tipRs[i + 1], frIface, flatFlange);
+                newBodies = append(newBodies, qCreatedBy(flangeIdL + "revolve", EntityType.BODY));
+
+                // 填充圆柱：与接口法兰同直径，位于两个法兰外端面之间
+                const cylStart = z[i] + widths[i] / 2 + effFts[i];
+                const cylLen = z[i + 1] - widths[i + 1] / 2 - effFts[i + 1] - cylStart;
+                if (cylLen > 0 * millimeter)
+                {
+                    const gapSketch = newSketchOnPlane(context, id + ("gapSketch" ~ toString(i)), {
+                                "sketchPlane" : plane(center + axis * cylStart, axis)
+                            });
+                    skCircle(gapSketch, "gap", {
+                                "center" : vector(0, 0) * millimeter,
+                                "radius" : frIface
+                            });
+                    skSolve(gapSketch);
+                    opExtrude(context, id + ("gapExtrude" ~ toString(i)), {
+                                "entities" : qSketchRegion(id + ("gapSketch" ~ toString(i))),
+                                "direction" : axis,
+                                "endBound" : BoundingType.BLIND,
+                                "endDepth" : cylLen
+                            });
+                    newBodies = append(newBodies, qCreatedBy(id + ("gapExtrude" ~ toString(i)), EntityType.BODY));
+                }
             }
         }
         else
