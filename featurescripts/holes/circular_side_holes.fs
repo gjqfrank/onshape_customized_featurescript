@@ -57,7 +57,6 @@ annotation {
         "Feature Type Description" : "Cut rings of evenly distributed radial holes on a cylinder/tube side: pick a body and an end face (disc or annulus); each ring has its own hole count, diameter, depth, and through-to-axis option; ring spacing is axial."
     }
 export const circularSideHoles = defineFeature(function(context is Context, id is Id, definition is map)
-{
     precondition
     {
     // 目标实体（Filter 写法参考 belt_official.fs）
@@ -156,6 +155,7 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
     }
     }
 
+    {
     // ---------------- 运行逻辑 ----------------
 
     // 1. 从端面解析圆柱参考（轴线 / 圆心 / 外半径）
