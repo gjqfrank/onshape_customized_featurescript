@@ -41,7 +41,9 @@ const HEX_3_8_AF = 0.375 * inch;
  *      HTD 3M/5M 共六种）/ 齿数 / 宽度，相邻带轮中心距可精确控制；节圆直径
  *      由齿数推导（pd = 齿数 x 皮带齿距 / PI），齿距恒为所选标准的皮带齿距
  *      （GT2 2M/3M/5M/8M 即 2/3/5/8mm，HTD 3M/5M 即 3/5mm），齿数变大带轮
- *      等比变大；
+ *      等比变大；齿顶外径严格按 SDP/SI 标准：OD = PD - 2U（U 值：
+ *      2M/3M = 0.254/0.381，5M = 0.5715，8M = 0.6858，HTD 3M/5M =
+ *      0.381/0.5715）；
  *      每个带轮两侧有挡边（法兰）防止带滑落，样式可选（Flange style）：
  *      锥形（默认，COTS 标准尺寸）：从齿顶锥形升起超过齿顶并保持；
  *      平圆柱：固定 1mm 厚、直径为法兰直径（> 齿顶）的圆柱。相邻两带轮
@@ -654,14 +656,27 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
 }
 
 /**
+ * 齿形缩放系数：齿顶（外圆）严格按 SDP/SI 标准 OD = PD - 2U（U 为皮带
+ * 齿顶线到节线的距离，见 ToothProfileDefinitions 中各齿形的 "U"）。
+ * 齿形点整体等比缩放使外圆落在标准 OD 上；齿槽的角度位置（i*2π/t）不变，
+ * 皮带在节圆（PD/2 = t*P/2π）上的啮合节距仍恒为 P。
+ */
+function toothScale(t is number, profile is map, pd is ValueWithUnits) returns ValueWithUnits
+{
+    const pts = computeGtToothPoints(t, profile);
+    const tipR = pd / 2 - profile["U"];
+    return tipR / norm(pts.D);
+}
+
+/**
  * 在给定平面上画出完整带轮齿形草图（t 个齿沿圆周闭合）。
- * 齿形点由 GT 标准参数解析求出，再按 scale = pd / (t*P/PI) 等比缩放到用户节圆直径。
+ * 齿形点由 GT 标准参数解析求出，再按 toothScale 等比缩放使外圆 = PD - 2U。
  * 返回齿根半径（缩放后）。
  */
 function drawPulleyTeeth(context is Context, id is Id, sketchPlane is Plane, t is number, profile is map, pd is ValueWithUnits)
 {
     const P = profile["P"];
-    const scale = pd / (t * P / PI);
+    const scale = toothScale(t, profile, pd);
     const pts = computeGtToothPoints(t, profile);
     const alpha = pts.alpha;
 
@@ -709,23 +724,21 @@ function drawPulleyTeeth(context is Context, id is Id, sketchPlane is Plane, t i
 }
 
 /**
- * 带轮齿根半径（缩放前由齿数与标准 pitch 决定，再按 pd 缩放）。
+ * 带轮齿根半径（齿形点缩放后，缩放系数同 toothScale）。
  */
 function pulleyRootRadius(t is number, profile is map, pd is ValueWithUnits) returns ValueWithUnits
 {
     const pts = computeGtToothPoints(t, profile);
-    const scale = pd / (t * profile["P"] / PI);
+    const scale = toothScale(t, profile, pd);
     return norm(pts.ABM) * scale;
 }
 
 /**
- * 带轮齿顶（外圆）半径（按 pd 缩放后）。D 点位于以轴心为圆心的齿顶圆上。
+ * 带轮齿顶（外圆）半径：严格按 SDP/SI 标准 OD = PD - 2U。
  */
 function pulleyTipRadius(t is number, profile is map, pd is ValueWithUnits) returns ValueWithUnits
 {
-    const pts = computeGtToothPoints(t, profile);
-    const scale = pd / (t * profile["P"] / PI);
-    return norm(pts.D) * scale;
+    return pd / 2 - profile["U"];
 }
 
 /**
@@ -1024,6 +1037,7 @@ const ToothProfileDefinitions = {
             "h" : 0.75 * millimeter,
             "i" : 0.63 * millimeter,
             "PLD" : 0.254 * millimeter,
+            "U" : 0.254 * millimeter,
             "FT" : 1 * millimeter,
             "FH" : 0.8 * millimeter
         },
@@ -1037,6 +1051,7 @@ const ToothProfileDefinitions = {
             "h" : 1.14 * millimeter,
             "i" : 1.26 * millimeter,
             "PLD" : 0.381 * millimeter,
+            "U" : 0.381 * millimeter,
             "FT" : 1.5 * millimeter,
             "FH" : 1.2 * millimeter
         },
@@ -1049,7 +1064,8 @@ const ToothProfileDefinitions = {
             "H" : 4 * millimeter,
             "h" : 1.9 * millimeter,
             "i" : 2.1 * millimeter,
-            "PLD" : 0.635 * millimeter,
+            "PLD" : 0.5715 * millimeter,
+            "U" : 0.5715 * millimeter,
             "FT" : 2 * millimeter,
             "FH" : 1.5 * millimeter
         },
@@ -1062,11 +1078,12 @@ const ToothProfileDefinitions = {
             "H" : 6.4 * millimeter,
             "h" : 3.04 * millimeter,
             "i" : 3.36 * millimeter,
-            "PLD" : 1.02 * millimeter,
+            "PLD" : 0.6858 * millimeter,
+            "U" : 0.6858 * millimeter,
             "FT" : 3 * millimeter,
             "FH" : 2 * millimeter
         },
-        // HTD 齿形：节距 / 齿深 / PLD / 法兰为 HTD 标准；R1/R2/R3/b 取与
+        // HTD 齿形：节距 / 齿深 / PLD / U / 法兰为 HTD 标准；R1/R2/R3/b 取与
         // GT 解析公式几何约束自洽的比例（近似齿形，避免 sqrt 负值 NaN）
         (ToothProfile.HTD_3M) : {
             "P" : 3 * millimeter,
@@ -1078,6 +1095,7 @@ const ToothProfileDefinitions = {
             "h" : 1.28 * millimeter,
             "i" : 1.4 * millimeter,
             "PLD" : 0.381 * millimeter,
+            "U" : 0.381 * millimeter,
             "FT" : 1.5 * millimeter,
             "FH" : 1 * millimeter
         },
@@ -1090,7 +1108,8 @@ const ToothProfileDefinitions = {
             "H" : 4 * millimeter,
             "h" : 2.13 * millimeter,
             "i" : 2.33 * millimeter,
-            "PLD" : 0.635 * millimeter,
+            "PLD" : 0.5715 * millimeter,
+            "U" : 0.5715 * millimeter,
             "FT" : 2 * millimeter,
             "FH" : 1.2 * millimeter
         },
