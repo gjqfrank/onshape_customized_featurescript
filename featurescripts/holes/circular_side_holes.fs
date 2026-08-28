@@ -91,7 +91,7 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
     }
 
     // 第 2-4 圈：条件显示（ringCount 足够时）
-    if (definition.ringCount > 1)
+    if (definition.ringCount - 1 >= 1)
     {
         annotation { "Name" : "Ring 2 distance from ring 1", "Description" : "Axial distance of ring 2 hole centers from ring 1" }
         isLength(definition.ring2Distance, RING_DIST_BOUNDS);
@@ -112,7 +112,7 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
         }
     }
 
-    if (definition.ringCount > 2)
+    if (definition.ringCount - 2 >= 1)
     {
         annotation { "Name" : "Ring 3 distance from ring 2" }
         isLength(definition.ring3Distance, RING_DIST_BOUNDS);
@@ -133,7 +133,7 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
         }
     }
 
-    if (definition.ringCount > 3)
+    if (definition.ringCount - 3 >= 1)
     {
         annotation { "Name" : "Ring 4 distance from ring 3" }
         isLength(definition.ring4Distance, RING_DIST_BOUNDS);
