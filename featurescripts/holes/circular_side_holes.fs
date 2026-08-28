@@ -416,7 +416,7 @@ function cutRingHoles(context is Context, ringId is Id, definition is map, cyl i
     // 沿 -y（径向向内）拉伸
     opExtrude(context, ringId + "extrude", {
                 "entities" : qSketchRegion(ringId + "sketch"),
-                "direction" : -skPlane.yAxis,
+                "direction" : skPlane.yAxis * -1,
                 "endBound" : BoundingType.BLIND,
                 "endDepth" : depth
             });
