@@ -603,9 +603,9 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
             var detail = "";
             for (var m = 0; m < size(merged); m += 1)
             {
-                const box = evBox3d(context, { "entities" : merged[m] });
+                const bb = evBox3d(context, { "entities" : merged[m] });
                 detail = detail ~ " | 实体" ~ toString(m + 1) ~ " min="
-                        ~ toString(box.minCorner) ~ " max=" ~ toString(box.maxCorner);
+                        ~ toString(bb.minCorner) ~ " max=" ~ toString(bb.maxCorner);
             }
             throw regenError("[combine-two-parts] 合并后仍有 " ~ toString(size(merged))
                     ~ " 个实体（端面内填充与端面外几何未缝合）：" ~ detail);
