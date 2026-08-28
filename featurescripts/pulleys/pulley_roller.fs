@@ -603,7 +603,7 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
             var detail = "";
             for (var m = 0; m < size(merged); m += 1)
             {
-                const bb = evBox3d(context, { "entities" : merged[m] });
+                const bb = evBox3d(context, { "topology" : merged[m] });
                 detail = detail ~ " | 实体" ~ toString(m + 1) ~ " min="
                         ~ toString(bb.minCorner) ~ " max=" ~ toString(bb.maxCorner);
             }
