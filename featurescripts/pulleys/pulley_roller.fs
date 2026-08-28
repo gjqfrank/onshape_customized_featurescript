@@ -580,32 +580,15 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     newBodies = append(newBodies, qCreatedBy(collarId + "revolve", EntityType.BODY));
 
     // 6. 合并：新几何（填充 + 主轴 + 引导段 + 各带轮 + 挡边 + 底领）合并为单一零件，不与原管子合并。
-    //    一次性多工具 opBoolean 在实体较多时会漏缝个别存在真实体积重叠的工具
-    //    （实测留下 2 个 part），改为 pairwise 顺序合并：每次把一个实体并入
-    //    目标体，每一对重叠都被显式缝合。tool 为空（已被消耗）或与目标解析到
-    //    同一实体时跳过该次合并
-    const allNew = evaluateQuery(context, qUnion(newBodies));
-    if (size(allNew) > 1)
+    //    采用参考实现（alexkempen robot pulley / imants chain / abenstirling）的标准
+    //    union 写法：opBoolean 只传 tools（qUnion 全部新实体）不传 targets，
+    //    tools 内所有实体互相合并
+    if (size(evaluateQuery(context, qUnion(newBodies))) > 1)
     {
-        var target = allNew[0];
-        for (var k = 1; k < size(allNew); k += 1)
-        {
-            const tool = evaluateQuery(context, allNew[k]);
-            if (size(tool) == 0)
-            {
-                continue;
-            }
-            // 单次合并失败（如 tool 与目标现场解析为同一实体，opBoolean 报
-            // "Need at least two parts"）不致命：静默跳过，由末尾自检兜底
-            try
-            {
-                opBoolean(context, id + ("union" ~ toString(k)), {
-                            "targets" : target,
-                            "tools" : tool[0],
-                            "operationType" : BooleanOperationType.UNION
-                        });
-            }
-        }
+        opBoolean(context, id + "union", {
+                    "tools" : qUnion(newBodies),
+                    "operationType" : BooleanOperationType.UNION
+                });
 
         // 自检：合并后必须只剩 1 个实体（qUnion(newBodies) 惰性重解析，
         // 工具已被消耗，只解析出存活的目标体）。多于 1 个即有几何块未缝合，
