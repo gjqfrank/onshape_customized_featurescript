@@ -583,7 +583,6 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
                     "operationType" : BooleanOperationType.UNION
                 });
     }
-    const finalBody = size(allNew) > 1 ? qCreatedBy(id + "union", EntityType.BODY) : allNew[0];
 
     // 7. 轴向孔：从零件最外端面沿 -axis 向内切孔（可贯穿或指定深度），
     //    孔中心可偏离轴线（沿垂直于轴的固定方向偏移 holeOffset）
@@ -633,7 +632,10 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
                 });
 
         opBoolean(context, id + "holeCut", {
-                    "targets" : finalBody,
+                    // 目标用 qUnion(newBodies)（惰性）：布尔 union 不创建新实体
+                    // （工具被消耗、目标体原地修改，qCreatedBy(id+"union") 解析为空），
+                    // 合并后此查询只剩存活的目标体；未合并场景则包含全部实体
+                    "targets" : qUnion(newBodies),
                     "tools" : qCreatedBy(id + "holeExtrude", EntityType.BODY),
                     "operationType" : BooleanOperationType.SUBTRACTION
                 });
