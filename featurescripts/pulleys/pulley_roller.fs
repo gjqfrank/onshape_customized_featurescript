@@ -660,11 +660,12 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
  * 齿顶线到节线的距离，见 ToothProfileDefinitions 中各齿形的 "U"）。
  * 齿形点整体等比缩放使外圆落在标准 OD 上；齿槽的角度位置（i*2π/t）不变，
  * 皮带在节圆（PD/2 = t*P/2π）上的啮合节距仍恒为 P。
+ * 解析齿形点坐标为无量纲数值，故缩放系数为无量纲数。
  */
-function toothScale(t is number, profile is map, pd is ValueWithUnits) returns ValueWithUnits
+function toothScale(t is number, profile is map, pd is ValueWithUnits) returns number
 {
     const pts = computeGtToothPoints(t, profile);
-    const tipR = pd / 2 - profile["U"];
+    const tipR = (pd / 2 - profile["U"]) / millimeter;
     return tipR / norm(pts.D);
 }
 
@@ -720,7 +721,7 @@ function drawPulleyTeeth(context is Context, id is Id, sketchPlane is Plane, t i
     }
     skSolve(sk);
 
-    return norm(pts.ABM) * scale;
+    return norm(pts.ABM) * scale * millimeter;
 }
 
 /**
@@ -730,7 +731,7 @@ function pulleyRootRadius(t is number, profile is map, pd is ValueWithUnits) ret
 {
     const pts = computeGtToothPoints(t, profile);
     const scale = toothScale(t, profile, pd);
-    return norm(pts.ABM) * scale;
+    return norm(pts.ABM) * scale * millimeter;
 }
 
 /**
