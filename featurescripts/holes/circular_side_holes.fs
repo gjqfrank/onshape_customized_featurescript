@@ -465,16 +465,18 @@ function cutRingHoles(context is Context, ringId is Id, definition is map, cyl i
 
     if (spec.count > 1)
     {
-        // 绕轴线均匀阵列 count-1 个副本
+        // 绕轴线均匀阵列 count-1 个副本（instanceNames 长度须与 transforms 一致）
         var transforms = [];
+        var instanceNames = [];
         for (var r = 1; r < spec.count; r += 1)
         {
             transforms = append(transforms, rotationAround(line(center, axis), r * (360 / spec.count) * degree));
+            instanceNames = append(instanceNames, "hole" ~ r);
         }
         opPattern(context, ringId + "pattern", {
                     "entities" : qCreatedBy(ringId + "extrude", EntityType.BODY),
                     "transforms" : transforms,
-                    "instanceNames" : []
+                    "instanceNames" : instanceNames
                 });
         tools = append(tools, qCreatedBy(ringId + "pattern", EntityType.BODY));
     }
