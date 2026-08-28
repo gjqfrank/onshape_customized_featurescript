@@ -43,18 +43,23 @@ const RING_DIST_BOUNDS =
             (inch) : 0.2
         } as LengthBoundSpec;
 
+const HOLE_COUNT_BOUNDS =
+{
+            (unitless) : [1, 6, 48]
+        } as IntegerBoundSpec;
+
 // ---------------------------------------------------------------
 // 主特征
 // ---------------------------------------------------------------
 
 export const circularSideHoles = defineFeature(function(context is Context, id is Id, definition is map)
 {
-    // 目标实体
-    annotation { "Name" : "Target body", "Description" : "要打孔的实体（圆柱/管）", "Filter" : [QueryFilterCompartment.SOLID] }
+    // 目标实体（Filter 写法参考 belt_official.fs）
+    annotation { "Name" : "Target body", "Description" : "要打孔的实体（圆柱/管）", "Filter" : EntityType.BODY, "MaxNumberOfPicks" : 1 }
     definition.body is Query;
 
     // 圆柱端面（圆或圆环均可）
-    annotation { "Name" : "Cylinder end face", "Description" : "圆柱端面（圆或圆环），用于确定轴线与外径", "Filter" : [QueryFilterCompartment.PLANAR] }
+    annotation { "Name" : "Cylinder end face", "Description" : "圆柱端面（圆或圆环），用于确定轴线与外径", "Filter" : GeometryType.PLANE && EntityType.FACE, "MaxNumberOfPicks" : 1 }
     definition.endFace is Query;
 
     // 圈数
@@ -158,8 +163,8 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
         cutRingHoles(context, id + ("ring" ~ toString(i)), definition, cyl, specs[i]);
     }
 
-    // 4. 清理草图
-    cleanup(context, id + "deleteSketches", qCreatedBy(id, EntityType.FACE));
+    // 4. 清理草图（alexkempen 写法：qSketchFilter 过滤草图实体）
+    cleanup(context, id + "deleteSketches", qCreatedBy(id, EntityType.BODY)->qSketchFilter(SketchObject.YES));
 });
 
 // ---------------------------------------------------------------
@@ -334,14 +339,17 @@ function cutRingHoles(context is Context, ringId is Id, definition is map, cyl i
                 "endDepth" : depth
             });
 
-    // 绕轴线均匀阵列 count 个（PatternType.PART + ADD，参考 vincentz 链轮）
-    circularPattern(context, ringId + "pattern", {
-                "patternType" : PatternType.PART,
+    // 绕轴线均匀阵列 count-1 个副本（opPattern + rotationAround，
+    // 参考 neilcooke spur gear 的齿阵列写法）
+    var transforms = [];
+    for (var r = 1; r < spec.count; r += 1)
+    {
+        transforms = append(transforms, rotationAround(line(center, axis), r * (360 / spec.count) * degree));
+    }
+    opPattern(context, ringId + "pattern", {
                 "entities" : qCreatedBy(ringId + "extrude", EntityType.BODY),
-                "axis" : line(center, axis),
-                "angle" : 360 / spec.count * degree,
-                "instanceCount" : spec.count,
-                "operationType" : NewBodyOperationType.ADD
+                "transforms" : transforms,
+                "instanceNames" : []
             });
 
     // 减切目标实体（targets = 实体，tools = 孔阵列；参考 alexkempen cutBore）
