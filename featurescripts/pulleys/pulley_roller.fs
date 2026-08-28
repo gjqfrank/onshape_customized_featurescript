@@ -606,8 +606,9 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
         else
         {
             // 六角孔：对边距 AF，外接圆半径 R = AF / sqrt(3)，顶点角 0/60/.../300
+            // 注意：cos/sin 只接受无量纲角度；带单位的半径单独乘
             const af = definition.hexSize == HexSize.HEX_1_2 ? HEX_HALF_AF : HEX_3_8_AF;
-            const hexR = af / sqrt(3);
+            const hexR = af / sqrt(3); // 外接圆半径（长度）
             var hexPts = [];
             for (var v = 0; v < 6; v += 1)
             {
