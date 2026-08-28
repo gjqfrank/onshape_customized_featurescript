@@ -22,7 +22,10 @@ const FLAT_FLANGE_LEN = 1 * millimeter;
  *   1. 按输入长度填充管子内孔（从所选端面向管内）
  *   2. 从端面沿轴向延伸主轴，默认直径与管子外径相同（与圆环面外环平齐）
  *   3. 沿轴排布多个同步带轮，每个带轮可独立设置齿形标准（GT2 2M/3M/5M/8M、
- *      HTD 3M/5M 共六种）/ 齿数 / 节圆直径 / 宽度，相邻带轮中心距可精确控制；
+ *      HTD 3M/5M 共六种）/ 齿数 / 宽度，相邻带轮中心距可精确控制；节圆直径
+ *      由齿数推导（pd = 齿数 x 皮带齿距 / PI），齿距恒为所选标准的皮带齿距
+ *      （GT2 2M/3M/5M/8M 即 2/3/5/8mm，HTD 3M/5M 即 3/5mm），齿数变大带轮
+ *      等比变大；
  *      每个带轮两侧有挡边（法兰）防止带滑落，样式可选（Flange style）：
  *      锥形（默认，COTS 标准尺寸）：从齿顶锥形升起超过齿顶并保持；
  *      平圆柱：固定 1mm 厚、直径为法兰直径（> 齿顶）的圆柱。相邻两带轮
@@ -85,11 +88,9 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
                      "Description" : "Axial distance from end face to center of pulley 1" }
         isLength(definition.offset1, OFFSET_BOUNDS);
 
-        annotation { "Name" : "Pulley 1 teeth" }
+        annotation { "Name" : "Pulley 1 teeth",
+                     "Description" : "Pitch diameter is derived: teeth x belt pitch / PI. More teeth = larger pulley, tooth spacing stays at the belt pitch" }
         isInteger(definition.teeth1, TEETH_BOUNDS);
-        annotation { "Name" : "Pulley 1 pitch diameter",
-                     "Description" : "Pitch diameter. Standard = teeth x pitch / PI; non-standard values scale the tooth profile" }
-        isLength(definition.pd1, PD_BOUNDS);
         annotation { "Name" : "Pulley 1 width",
                      "Description" : "Pulley width (common standard: 6mm / 9mm)" }
         isLength(definition.width1, WIDTH_BOUNDS);
@@ -102,11 +103,8 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         definition.profile2 is ToothProfile;
 
         annotation { "Name" : "Pulley 2 teeth",
-                     "Description" : "Used when Number of pulleys is 2 or more" }
+                     "Description" : "Used when Number of pulleys is 2 or more. Pitch diameter is derived from teeth" }
         isInteger(definition.teeth2, TEETH_BOUNDS);
-        annotation { "Name" : "Pulley 2 pitch diameter",
-                     "Description" : "Used when Number of pulleys is 2 or more" }
-        isLength(definition.pd2, PD_BOUNDS);
         annotation { "Name" : "Pulley 2 width",
                      "Description" : "Used when Number of pulleys is 2 or more" }
         isLength(definition.width2, WIDTH_BOUNDS);
@@ -119,11 +117,8 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         definition.profile3 is ToothProfile;
 
         annotation { "Name" : "Pulley 3 teeth",
-                     "Description" : "Used when Number of pulleys is 3 or more" }
+                     "Description" : "Used when Number of pulleys is 3 or more. Pitch diameter is derived from teeth" }
         isInteger(definition.teeth3, TEETH_BOUNDS);
-        annotation { "Name" : "Pulley 3 pitch diameter",
-                     "Description" : "Used when Number of pulleys is 3 or more" }
-        isLength(definition.pd3, PD_BOUNDS);
         annotation { "Name" : "Pulley 3 width",
                      "Description" : "Used when Number of pulleys is 3 or more" }
         isLength(definition.width3, WIDTH_BOUNDS);
@@ -136,11 +131,8 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         definition.profile4 is ToothProfile;
 
         annotation { "Name" : "Pulley 4 teeth",
-                     "Description" : "Used when Number of pulleys is 4" }
+                     "Description" : "Used when Number of pulleys is 4. Pitch diameter is derived from teeth" }
         isInteger(definition.teeth4, TEETH_BOUNDS);
-        annotation { "Name" : "Pulley 4 pitch diameter",
-                     "Description" : "Used when Number of pulleys is 4" }
-        isLength(definition.pd4, PD_BOUNDS);
         annotation { "Name" : "Pulley 4 width",
                      "Description" : "Used when Number of pulleys is 4" }
         isLength(definition.width4, WIDTH_BOUNDS);
@@ -163,19 +155,15 @@ export const pulleyRoller = defineFeature(function(context is Context, id is Id,
         "shaftDiameter" : 10 * millimeter,
         "offset1" : 12 * millimeter,
         "teeth1" : 28,
-        "pd1" : 28 * 3 * millimeter / PI,
         "width1" : 6 * millimeter,
         "ctc1" : 20 * millimeter,
         "teeth2" : 32,
-        "pd2" : 32 * 3 * millimeter / PI,
         "width2" : 6 * millimeter,
         "ctc2" : 20 * millimeter,
         "teeth3" : 24,
-        "pd3" : 24 * 3 * millimeter / PI,
         "width3" : 6 * millimeter,
         "ctc3" : 20 * millimeter,
         "teeth4" : 24,
-        "pd4" : 24 * 3 * millimeter / PI,
         "width4" : 6 * millimeter
     });
 
@@ -238,14 +226,12 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     // 收集各带轮参数（每个带轮可独立选择齿形标准）
     var profiles = [definition.profile1];
     var teeth = [definition.teeth1];
-    var pds = [definition.pd1];
     var widths = [definition.width1];
     var centers = [definition.offset1];
     if (definition.pulleyCount >= 2)
     {
         profiles = append(profiles, definition.profile2);
         teeth = append(teeth, definition.teeth2);
-        pds = append(pds, definition.pd2);
         widths = append(widths, definition.width2);
         centers = append(centers, definition.ctc1);
     }
@@ -253,7 +239,6 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     {
         profiles = append(profiles, definition.profile3);
         teeth = append(teeth, definition.teeth3);
-        pds = append(pds, definition.pd3);
         widths = append(widths, definition.width3);
         centers = append(centers, definition.ctc2);
     }
@@ -261,7 +246,6 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     {
         profiles = append(profiles, definition.profile4);
         teeth = append(teeth, definition.teeth4);
-        pds = append(pds, definition.pd4);
         widths = append(widths, definition.width4);
         centers = append(centers, definition.ctc3);
     }
@@ -272,8 +256,10 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     const collarOverhang = definition.flangeOverhang;
 
     // 各带轮的齿形参数与 COTS 法兰参数（FT 轴向厚度 / FH 高出齿顶高度）、
-    // 齿顶半径与自身法兰半径
+    // 节圆直径（由齿数推导：pd = teeth x P / PI，齿距恒为皮带齿距 P，
+    // 齿数变大带轮等比变大）、齿顶半径与自身法兰半径
     var profs = [];
+    var pds = [];
     var fts = [];
     var tipRs = [];
     var flangeRs = [];
@@ -281,6 +267,7 @@ function doPulleyRoller(context is Context, id is Id, definition is map)
     {
         const p = ToothProfileDefinitions[profiles[i]];
         profs = append(profs, p);
+        pds = append(pds, teeth[i] * p["P"] / PI);
         fts = append(fts, p["FT"]);
         tipRs = append(tipRs, pulleyTipRadius(teeth[i], p, pds[i]));
         flangeRs = append(flangeRs, tipRs[i] + p["FH"]);
@@ -833,12 +820,6 @@ const TEETH_BOUNDS =
 {
             (unitless) : [10, 28, 200]
         } as IntegerBoundSpec;
-
-const PD_BOUNDS =
-{
-            (millimeter) : [5, 26.74, 500],
-            (inch) : 1.0
-        } as LengthBoundSpec;
 
 const WIDTH_BOUNDS =
 {
