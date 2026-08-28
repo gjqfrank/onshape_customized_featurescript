@@ -4,7 +4,7 @@ FeatureScript 3044;
  * 圆柱侧面环形排孔 (Circular Side Holes)
  * =====================================
  *
- * 在圆柱（管）侧面上打多圈沿圆周均匀分布的孔：
+ * 在圆柱（管）侧面上打多圈沿圆周均匀分布的径向孔：
  *   1. 选择目标实体与圆柱端面（圆或圆环均可）——由端面的相邻圆边
  *      自动确定圆柱轴线（端面法向）、圆心与外径
  *   2. 每圈孔（最多 4 圈）独立设置：
@@ -14,9 +14,14 @@ FeatureScript 3044;
  *      - 是否通孔（直接打到圆柱轴线，忽略深度）
  *   3. 孔为径向向心方向（垂直于圆柱轴线，从外表面指向轴线）
  *
- * 端面圆边解析 / evPlane / evLength 接缝过滤手法来自 pulley_roller.fs；
- * circularPattern 用法参考 sprocket_vincentz.fs；减切布尔参考
- * pulley_roller / alexkempen 的 targets+tools SUBTRACTION 写法。
+ * 已规避的 FeatureScript 陷阱：
+ *   - skCircle center 必须是带长度单位的 2D 点：vector(0, 0) * millimeter
+ *   - Vector 不支持一元负号，用 * -1
+ *   - Plane 的 y 轴用 ->yAxis()；直接存的是 origin/normal/x
+ *   - evCurveDefinition 圆边的圆心在 coordSystem.origin（无 center 字段）
+ *   - 拉伸方向必须垂直于草图平面（沿 ±normal），不能沿面内方向
+ *   - opPattern 空 transforms 会报错，孔数 = 1 时跳过阵列
+ *   - 端面法向可能背离实体，需探测实体方向并翻转轴线
  */
 
 import(path : "onshape/std/common.fs", version : "3044.0");
@@ -59,7 +64,7 @@ annotation {
 export const circularSideHoles = defineFeature(function(context is Context, id is Id, definition is map)
     precondition
     {
-    // 目标实体（Filter 写法参考 belt_official.fs）
+    // 目标实体
     annotation { "Name" : "Target body", "Description" : "Body to cut (cylinder or tube)", "Filter" : EntityType.BODY, "MaxNumberOfPicks" : 1 }
     definition.body is Query;
 
@@ -96,7 +101,7 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
         isLength(definition.depth1, HOLE_DEPTH_BOUNDS);
     }
 
-    // 第 2-4 圈：条件显示（ringCount 足够时）
+    // 第 2-4 圈：条件显示
     if (definition.addRing2)
     {
         annotation { "Name" : "Ring 2 distance from ring 1", "Description" : "Axial distance of ring 2 hole centers from ring 1" }
@@ -164,8 +169,8 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
     {
     // ---------------- 运行逻辑 ----------------
 
-    // 1. 从端面解析圆柱参考（轴线 / 圆心 / 外半径）
-    const cyl = getCylinderFromFace(context, definition.endFace);
+    // 1. 从端面解析圆柱参考（指向实体内部的轴线 / 圆心 / 外半径）
+    const cyl = getCylinderFromFace(context, definition.endFace, definition.body);
 
     // 2. 整理每圈规格（轴向位置 / 孔数 / 直径 / 深度 / 通孔）
     const specs = buildRingSpecs(definition);
@@ -176,7 +181,7 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
         cutRingHoles(context, id + ("ring" ~ toString(i)), definition, cyl, specs[i]);
     }
 
-    // 4. 清理草图（opDeleteBodies + qSketchFilter，参考 neilcooke/alexkempen）
+    // 4. 清理草图
     opDeleteBodies(context, id + "deleteSketches", {
                 "entities" : qCreatedBy(id, EntityType.BODY)->qSketchFilter(SketchObject.YES)
             });
@@ -189,9 +194,9 @@ export const circularSideHoles = defineFeature(function(context is Context, id i
 /**
  * 从所选端面解析圆柱参考。
  * 端面可以是圆（实心）或圆环（管）：取相邻圆边中半径最大者为外圆。
- * 返回 { axis, center, outerR }。
+ * 返回 { axis, center, outerR }，其中 axis 已保证指向实体内部。
  */
-function getCylinderFromFace(context is Context, face is Query)
+function getCylinderFromFace(context is Context, face is Query, body is Query)
 {
     // 面必须是平面
     const facePlane = try(evPlane(context, { "face" : face }));
@@ -233,11 +238,32 @@ function getCylinderFromFace(context is Context, face is Query)
         }
     }
 
-    // 圆边定义的圆心在 coordSystem.origin（无 center 字段，参考 integer_belt_joshtargo.fs）
+    // 圆边定义的圆心在 coordSystem.origin（无 center 字段）
+    const center = outer.coordSystem.origin;
+    const outerR = outer.radius;
+
+    // 端面法向可能指向实体外：用贴外壁的探测点判断实体在法向哪一侧，
+    // 保证 axis 从端面指向实体内部（孔的轴向位置沿 axis 正向累计）
+    var axis = facePlane.normal;
+    const probeDir = perpendicularVector(axis);
+    const probePoint = center + axis * 0.01 * millimeter + probeDir * (outerR - 0.01 * millimeter);
+    const probePointBack = center + axis * -0.01 * millimeter + probeDir * (outerR - 0.01 * millimeter);
+    const insideFront = size(evaluateQuery(context, qContainsPoint(body, probePoint))) > 0;
+    const insideBack = size(evaluateQuery(context, qContainsPoint(body, probePointBack))) > 0;
+
+    if (!insideFront && insideBack)
+    {
+        axis = axis * -1;
+    }
+    else if (!insideFront && !insideBack)
+    {
+        throw regenError("无法确定实体在端面的哪一侧，请确认所选实体与端面属于同一圆柱");
+    }
+
     return {
-                "axis" : facePlane.normal,
-                "center" : outer.coordSystem.origin,
-                "outerR" : outer.radius
+                "axis" : axis,
+                "center" : center,
+                "outerR" : outerR
             };
 }
 
@@ -383,8 +409,8 @@ function getRingHoleThrough(definition is map, ring is number)
 /**
  * 切一圈孔：
  *   孔心在外表面（轴心 + 轴向 z + 径向 outerR）。草图平面法向 = 径向
- *   （即孔轴方向）、x = 轴向；圆画在草图原点，沿 -normal（径向向心）
- *   拉伸深度，绕轴 circularPattern，减切目标实体。
+ *   （即孔轴方向）、x = 轴向；圆画在草图原点（带长度单位的 2D 点），
+ *   沿 -normal（径向向心）拉伸深度，绕轴 circularPattern，减切目标实体。
  */
 function cutRingHoles(context is Context, ringId is Id, definition is map, cyl is map, spec is map)
 {
@@ -392,13 +418,26 @@ function cutRingHoles(context is Context, ringId is Id, definition is map, cyl i
     const center = cyl.center;
     const outerR = cyl.outerR;
 
+    const holeR = spec.diameter / 2;
+    if (holeR >= outerR)
+    {
+        throw regenError("孔直径不能大于等于圆柱外径");
+    }
+
     // 孔心（3D）：轴心 + 轴向偏移 spec.z + 径向偏移 outerR（外表面上）
     const radialDir = perpendicularVector(axis);
     const holeCenter = center + axis * spec.z + radialDir * outerR;
-    const holeR = spec.diameter / 2;
 
     // 深度：通孔打到轴线（= outerR），否则用户深度
-    const depth = spec.through ? outerR : spec.depth;
+    var depth;
+    if (spec.through)
+    {
+        depth = outerR;
+    }
+    else
+    {
+        depth = spec.depth;
+    }
 
     // 草图平面：法向 = 径向（即孔轴方向），原点 = 孔心，x 沿轴向。
     // 孔轴垂直于草图平面，沿 -normal（径向向心）拉伸。
@@ -408,7 +447,7 @@ function cutRingHoles(context is Context, ringId is Id, definition is map, cyl i
                 "sketchPlane" : skPlane
             });
     skCircle(sk, "hole", {
-                "center" : vector(0, 0),
+                "center" : vector(0, 0) * millimeter,
                 "radius" : holeR
             });
     skSolve(sk);
@@ -421,26 +460,29 @@ function cutRingHoles(context is Context, ringId is Id, definition is map, cyl i
                 "endDepth" : depth
             });
 
-    // 绕轴线均匀阵列 count-1 个副本（opPattern + rotationAround，
-    // 参考 neilcooke spur gear 的齿阵列写法）
-    var transforms = [];
-    for (var r = 1; r < spec.count; r += 1)
-    {
-        transforms = append(transforms, rotationAround(line(center, axis), r * (360 / spec.count) * degree));
-    }
-    opPattern(context, ringId + "pattern", {
-                "entities" : qCreatedBy(ringId + "extrude", EntityType.BODY),
-                "transforms" : transforms,
-                "instanceNames" : []
-            });
+    // 减切工具：先阵列（孔数 > 1 时），把孔圆柱与阵列副本并集后统一减切
+    var tools = [qCreatedBy(ringId + "extrude", EntityType.BODY)];
 
-    // 减切目标实体（targets = 实体，tools = 孔阵列；参考 alexkempen cutBore）
+    if (spec.count > 1)
+    {
+        // 绕轴线均匀阵列 count-1 个副本
+        var transforms = [];
+        for (var r = 1; r < spec.count; r += 1)
+        {
+            transforms = append(transforms, rotationAround(line(center, axis), r * (360 / spec.count) * degree));
+        }
+        opPattern(context, ringId + "pattern", {
+                    "entities" : qCreatedBy(ringId + "extrude", EntityType.BODY),
+                    "transforms" : transforms,
+                    "instanceNames" : []
+                });
+        tools = append(tools, qCreatedBy(ringId + "pattern", EntityType.BODY));
+    }
+
+    // 减切目标实体（targets = 实体，tools = 孔圆柱 + 阵列副本）
     opBoolean(context, ringId + "cut", {
                 "targets" : definition.body,
-                "tools" : qUnion([
-                            qCreatedBy(ringId + "extrude", EntityType.BODY),
-                            qCreatedBy(ringId + "pattern", EntityType.BODY)
-                        ]),
+                "tools" : qUnion(tools),
                 "operationType" : BooleanOperationType.SUBTRACTION
             });
 }
