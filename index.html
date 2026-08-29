@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Onshape Customized FeatureScripts</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --tag: #238636;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .container { max-width: 880px; margin: 0 auto; padding: 48px 24px; }
+  header h1 { font-size: 2rem; margin-bottom: 8px; }
+  header h1 span { color: var(--accent); }
+  header p { color: var(--muted); margin-bottom: 32px; }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 24px; }
+  @media (min-width: 720px) { .grid { grid-template-columns: 1fr 1fr; } }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+  }
+  .card h2 { font-size: 1.15rem; margin-bottom: 4px; }
+  .card .meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 12px; }
+  .card ul { margin: 12px 0 16px 18px; color: var(--muted); font-size: 0.92rem; }
+  .card ul li { margin-bottom: 4px; }
+  .card ul li b { color: var(--text); font-weight: 600; }
+  .badge {
+    display: inline-block;
+    background: rgba(35, 134, 54, 0.2);
+    color: #3fb950;
+    border: 1px solid rgba(35, 134, 54, 0.4);
+    border-radius: 999px;
+    font-size: 0.75rem;
+    padding: 2px 10px;
+    margin-bottom: 12px;
+  }
+  .btn {
+    display: inline-block;
+    background: #21262d;
+    border: 1px solid var(--border);
+    color: var(--text);
+    text-decoration: none;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 0.9rem;
+    margin-right: 8px;
+    transition: border-color 0.2s;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.primary { background: #238636; border-color: #2ea043; color: #fff; }
+  .btn.primary:hover { background: #2ea043; color: #fff; }
+  footer {
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Onshape <span>Customized FeatureScripts</span></h1>
+    <p>自研 FeatureScript 合集 · FeatureScript 3044 · by gjqfrank</p>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <span class="badge">Pulleys</span>
+      <h2>Pulley Roller（圆管塞 + 复合带轮）</h2>
+      <div class="meta">pulley_roller.fs · round-tube-plug-with-pulley</div>
+      <p class="desc">在圆管端部生成带轮组件：端部收拢的锥形端领 + 多个带轮 + 挡边，一体化成型。</p>
+      <ul>
+        <li><b>6 种齿形</b>：HTD 3M/5M、GT2 2M/3M/5M/8M，每个带轮独立选择</li>
+        <li><b>标准外径</b>：按 SDP/SI 规范 OD = PD − 2U 自动修正齿形缩放</li>
+        <li><b>挡边两种风格</b>：锥形（COTS 默认）或平圆柱（1mm，相邻共享）</li>
+        <li><b>COTS 挡边参数</b>：厚度与高出齿顶高度按带型标准取值</li>
+        <li><b>最小中心距约束</b>：相邻带轮外端面不重叠，自动校验 CTC</li>
+        <li><b>轴孔</b>：1/2 六角、3/8 六角或自定义圆孔，可配置深度与偏移</li>
+      </ul>
+      <a class="btn primary" href="files/pulley_roller.fs">下载 .fs</a>
+      <a class="btn" href="https://github.com/gjqfrank/onshape_customized_featurescript/blob/main/featurescripts/pulleys/pulley_roller.fs" target="_blank">源码</a>
+    </div>
+
+    <div class="card">
+      <span class="badge">Holes</span>
+      <h2>Circular Side Holes（圆柱侧面环形排孔）</h2>
+      <div class="meta">circular_side_holes.fs · holes-on-curve-plane</div>
+      <p class="desc">在圆柱（实心或空心圆管）侧面上打多圈沿圆周均匀分布的径向孔。</p>
+      <ul>
+        <li><b>自动识别</b>：选端面（圆或圆环均可）即得轴线、圆心与外径</li>
+        <li><b>最多 4 圈</b>：每圈独立设置孔数、孔径、孔深、通孔选项</li>
+        <li><b>轴向定位</b>：第 1 圈距端面，其后各圈距前一圈</li>
+        <li><b>径向孔轴</b>：垂直于轴线、指向轴心，孔径 = 可插入圆柱直径</li>
+        <li><b>通孔模式</b>：勾选后直接打到圆柱轴线（空心管即径向贯穿）</li>
+        <li><b>智能方向</b>：自动探测实体在端面哪一侧，法向翻转免调</li>
+      </ul>
+      <a class="btn primary" href="files/circular_side_holes.fs">下载 .fs</a>
+      <a class="btn" href="https://github.com/gjqfrank/onshape_customized_featurescript/blob/main/featurescripts/holes/circular_side_holes.fs" target="_blank">源码</a>
+    </div>
+  </div>
+
+  <footer>
+    <p>源仓库：<a href="https://github.com/gjqfrank/onshape_customized_featurescript" target="_blank">gjqfrank/onshape_customized_featurescript</a> · 使用方式：Onshape 中新建 Feature Studio，粘贴 .fs 内容即可。</p>
+  </footer>
+</div>
+</body>
+</html>
