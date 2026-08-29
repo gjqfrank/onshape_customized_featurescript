@@ -5,32 +5,64 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Onshape Customized FeatureScripts</title>
 <style>
-  :root {
+  /* ---------- 主题变量：深色（默认）与浅色 ---------- */
+  :root, body[data-theme="dark"] {
     --bg: #0d1117;
+    --bg-soft: #010409;
     --card: #161b22;
     --border: #30363d;
     --text: #e6edf3;
     --muted: #8b949e;
     --accent: #58a6ff;
-    --tag: #238636;
+    --accent-soft: rgba(88, 166, 255, 0.1);
+    --btn: #21262d;
+    --ok-bg: rgba(35, 134, 54, 0.15);
+    --ok-fg: #3fb950;
+    --ok-border: rgba(63, 185, 80, 0.4);
+    --primary: #238636;
+    --primary-hi: #2ea043;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    color-scheme: dark;
+  }
+  body[data-theme="light"] {
+    --bg: #f6f8fa;
+    --bg-soft: #ffffff;
+    --card: #ffffff;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --muted: #57606a;
+    --accent: #0969da;
+    --accent-soft: rgba(9, 105, 218, 0.08);
+    --btn: #f6f8fa;
+    --ok-bg: rgba(31, 136, 61, 0.1);
+    --ok-fg: #1a7f37;
+    --ok-border: rgba(26, 127, 55, 0.4);
+    --primary: #1f883d;
+    --primary-hi: #1a7f37;
+    --shadow: 0 1px 3px rgba(140, 149, 159, 0.25);
+    color-scheme: light;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     background: var(--bg);
     color: var(--text);
     line-height: 1.6;
+    transition: background 0.25s ease, color 0.25s ease;
   }
   /* 语言切换：默认中文 */
   body[data-lang="en"] .zh { display: none; }
   body[data-lang="zh"] .en { display: none; }
-  .container { max-width: 880px; margin: 0 auto; padding: 48px 24px; }
+  .container { max-width: 920px; margin: 0 auto; padding: 56px 24px 48px; }
   .header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-  header h1 { font-size: 2rem; margin-bottom: 8px; }
+  .header-actions { display: flex; gap: 8px; }
+  header { padding-bottom: 32px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+  header h1 { font-size: 2.1rem; letter-spacing: -0.02em; margin-bottom: 8px; }
   header h1 span { color: var(--accent); }
-  header p { color: var(--muted); margin-bottom: 32px; }
-  #langToggle {
-    background: #21262d;
+  header p { color: var(--muted); }
+  .ctl-btn {
+    background: var(--btn);
     border: 1px solid var(--border);
     color: var(--text);
     border-radius: 6px;
@@ -38,37 +70,56 @@
     font-size: 0.9rem;
     cursor: pointer;
     white-space: nowrap;
-    transition: border-color 0.2s;
+    transition: border-color 0.2s, color 0.2s, background 0.25s;
   }
-  #langToggle:hover { border-color: var(--accent); color: var(--accent); }
-  h2.section-title { font-size: 1.3rem; margin: 40px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  .ctl-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .ctl-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  h2.section-title {
+    font-size: 1.35rem;
+    margin: 44px 0 18px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  h2.section-title .count { color: var(--muted); font-size: 0.9rem; font-weight: 400; }
+  h3.group-title { color: var(--muted); margin: 28px 0 12px; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.06em; }
   .grid { display: grid; grid-template-columns: 1fr; gap: 24px; }
   @media (min-width: 720px) { .grid { grid-template-columns: 1fr 1fr; } }
   .card {
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 24px;
+    border-radius: 10px;
+    padding: 26px;
+    box-shadow: var(--shadow);
+    transition: border-color 0.2s, transform 0.2s, background 0.25s;
   }
-  .card h3 { font-size: 1.15rem; margin-bottom: 4px; }
-  .card .meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 12px; }
-  .card ul { margin: 12px 0 16px 18px; color: var(--muted); font-size: 0.92rem; }
-  .card ul li { margin-bottom: 4px; }
+  .card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .card h3 { font-size: 1.18rem; margin-bottom: 4px; }
+  .card .meta { color: var(--muted); font-size: 0.82rem; margin-bottom: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .card .desc { font-size: 0.95rem; }
+  .card ul { margin: 14px 0 18px 18px; color: var(--muted); font-size: 0.92rem; }
+  .card ul li { margin-bottom: 5px; }
+  .card ul li::marker { color: var(--accent); }
   .card ul li b { color: var(--text); font-weight: 600; }
   .badge {
     display: inline-block;
-    background: rgba(35, 134, 54, 0.2);
-    color: #3fb950;
-    border: 1px solid rgba(35, 134, 54, 0.4);
+    background: var(--ok-bg);
+    color: var(--ok-fg);
+    border: 1px solid var(--ok-border);
     border-radius: 999px;
-    font-size: 0.75rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
     padding: 2px 10px;
     margin-bottom: 12px;
   }
   .row {
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 16px 20px;
     margin-bottom: 12px;
     display: flex;
@@ -76,36 +127,40 @@
     align-items: center;
     gap: 16px;
     flex-wrap: wrap;
+    box-shadow: var(--shadow);
+    transition: border-color 0.2s, transform 0.2s, background 0.25s;
   }
+  .row:hover { border-color: var(--accent); transform: translateY(-1px); }
   .row .info { flex: 1 1 320px; }
   .row .name { font-size: 1rem; font-weight: 600; }
   .row .name .author { color: var(--muted); font-weight: 400; font-size: 0.85rem; }
   .row .desc { color: var(--muted); font-size: 0.88rem; }
   .btn {
     display: inline-block;
-    background: #21262d;
+    background: var(--btn);
     border: 1px solid var(--border);
     color: var(--text);
     text-decoration: none;
     border-radius: 6px;
-    padding: 6px 12px;
+    padding: 6px 14px;
     font-size: 0.85rem;
-    transition: border-color 0.2s;
+    transition: border-color 0.2s, color 0.2s, background 0.25s;
   }
-  .btn:hover { border-color: var(--accent); color: var(--accent); }
-  .btn.primary { background: #238636; border-color: #2ea043; color: #fff; }
-  .btn.primary:hover { background: #2ea043; color: #fff; }
+  .btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .btn.primary { background: var(--primary); border-color: var(--primary-hi); color: #fff; }
+  .btn.primary:hover { background: var(--primary-hi); border-color: var(--primary-hi); color: #fff; }
   footer {
-    margin-top: 48px;
+    margin-top: 56px;
     padding-top: 24px;
     border-top: 1px solid var(--border);
     color: var(--muted);
     font-size: 0.85rem;
   }
   footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
 </style>
 </head>
-<body data-lang="zh">
+<body data-lang="zh" data-theme="dark">
 <div class="container">
   <header>
     <div class="header-row">
@@ -116,7 +171,13 @@
           <span class="en">Custom FeatureScript collection · FeatureScript 3044 · by gjqfrank</span>
         </p>
       </div>
-      <button id="langToggle" onclick="toggleLang()">EN</button>
+      <div class="header-actions">
+        <button id="langToggle" class="ctl-btn" onclick="toggleLang()">EN</button>
+        <button id="themeToggle" class="ctl-btn" onclick="toggleTheme()" title="Toggle light / dark">
+          <span class="zh">浅色</span>
+          <span class="en">Light</span>
+        </button>
+      </div>
     </div>
   </header>
 
@@ -168,7 +229,7 @@
     <span class="en">Reference FeatureScripts (community / official)</span>
   </h2>
 
-  <h3 class="group-title" style="color: var(--muted); margin: 24px 0 12px; font-size: 1rem;">
+  <h3 class="group-title">
     <span class="zh">齿轮 Gears</span>
     <span class="en">Gears</span>
   </h3>
@@ -180,7 +241,7 @@
   <div class="row"><div class="info"><div class="name">Spur Gear <span class="author">Neil Cooke</span></div><div class="desc"><span class="zh">数学精确的渐开线直齿轮，可选中心孔与键槽</span><span class="en">Mathematically correct spur gears with optional bore and keyway</span></div></div><div><a class="btn primary" href="files/gears/spur_gear_neilcooke.fs">.fs</a><a class="btn" href="https://github.com/gjqfrank/onshape_customized_featurescript/blob/main/featurescripts/gears/spur_gear_neilcooke.fs" target="_blank"><span class="zh">源码</span><span class="en">Source</span></a></div></div>
   <div class="row"><div class="info"><div class="name">Spur Gear v2 <span class="author">Neil Cooke (original)</span></div><div class="desc"><span class="zh">v2 原版直齿轮</span><span class="en">v2 original spur gear version</span></div></div><div><a class="btn primary" href="files/gears/spur_gear_neilcooke_v2_original.fs">.fs</a><a class="btn" href="https://github.com/gjqfrank/onshape_customized_featurescript/blob/main/featurescripts/gears/spur_gear_neilcooke_v2_original.fs" target="_blank"><span class="zh">源码</span><span class="en">Source</span></a></div></div>
 
-  <h3 class="group-title" style="color: var(--muted); margin: 24px 0 12px; font-size: 1rem;">
+  <h3 class="group-title">
     <span class="zh">带轮与皮带 Pulleys &amp; Belts</span>
     <span class="en">Pulleys &amp; Belts</span>
   </h3>
@@ -192,7 +253,7 @@
   <div class="row"><div class="info"><div class="name">Timing Belt Pulley <span class="author">abenstirling</span></div><div class="desc"><span class="zh">同步带轮生成器</span><span class="en">Timing belt pulley generator</span></div></div><div><a class="btn primary" href="files/pulleys/timing_belt_pulley_abenstirling.fs">.fs</a><a class="btn" href="https://github.com/gjqfrank/onshape_customized_featurescript/blob/main/featurescripts/pulleys/timing_belt_pulley_abenstirling.fs" target="_blank"><span class="zh">源码</span><span class="en">Source</span></a></div></div>
   <div class="row"><div class="info"><div class="name">Timing Belt Pulley <span class="author">trilobio</span></div><div class="desc"><span class="zh">同步带轮生成器</span><span class="en">Timing belt pulley generator</span></div></div><div><a class="btn primary" href="files/pulleys/timing_belt_pulley_trilobio.fs">.fs</a><a class="btn" href="https://github.com/gjqfrank/onshape_customized_featurescript/blob/main/featurescripts/pulleys/timing_belt_pulley_trilobio.fs" target="_blank"><span class="zh">源码</span><span class="en">Source</span></a></div></div>
 
-  <h3 class="group-title" style="color: var(--muted); margin: 24px 0 12px; font-size: 1rem;">
+  <h3 class="group-title">
     <span class="zh">链轮 Sprockets</span>
     <span class="en">Sprockets</span>
   </h3>
@@ -220,10 +281,26 @@
   function toggleLang() {
     setLang(document.body.dataset.lang === 'zh' ? 'en' : 'zh');
   }
+  function setTheme(theme) {
+    document.body.dataset.theme = theme;
+    var btn = document.getElementById('themeToggle');
+    // 按钮显示“将切换到的目标主题”
+    btn.querySelector('.zh').textContent = theme === 'dark' ? '浅色' : '深色';
+    btn.querySelector('.en').textContent = theme === 'dark' ? 'Light' : 'Dark';
+    try { localStorage.setItem('fs-site-theme', theme); } catch (e) {}
+  }
+  function toggleTheme() {
+    setTheme(document.body.dataset.theme === 'dark' ? 'light' : 'dark');
+  }
   (function init() {
-    var saved = null;
-    try { saved = localStorage.getItem('fs-site-lang'); } catch (e) {}
-    setLang(saved === 'en' ? 'en' : 'zh');
+    var savedLang = null;
+    var savedTheme = null;
+    try {
+      savedLang = localStorage.getItem('fs-site-lang');
+      savedTheme = localStorage.getItem('fs-site-theme');
+    } catch (e) {}
+    setLang(savedLang === 'en' ? 'en' : 'zh');
+    setTheme(savedTheme === 'light' ? 'light' : 'dark');
   })();
 </script>
 </body>
